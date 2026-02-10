@@ -11,13 +11,33 @@
 
 #define BOARD_CONFIG_LABEL "Pico"
 
+// ------------------------------------------------------------
+// PIO-USB Host (TinyUSB Host over PIO-USB)
+// ------------------------------------------------------------
+// Enable PIO USB peripheral block used for USB Host
+#define USB_PERIPHERAL_ENABLED 1
+
+// Use GPIO 5/6 as USB data pair for the HOST port
+// Config A: D+ (DP)=GP5, D- (DM)=GP6
+#define USB_PERIPHERAL_PIN_DPLUS 5
+#define USB_PERIPHERAL_PIN_ORDER 0  // PIO_USB_PINOUT_DPDM
+
+// Pico doesn't have a default VBUS enable pin for a USB-A port
+#define USB_PERIPHERAL_PIN_5V -1
+
+// ------------------------------------------------------------
 // Main pin mapping Configuration
+// NOTE: GP5/GP6 are reserved for USB Host now.
+// ------------------------------------------------------------
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define GPIO_PIN_02 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |
 #define GPIO_PIN_03 GpioAction::BUTTON_PRESS_DOWN   // DOWN   | DOWN   | DOWN    | DOWN     | DOWN   | DOWN   |
 #define GPIO_PIN_04 GpioAction::BUTTON_PRESS_RIGHT  // RIGHT  | RIGHT  | RIGHT   | RIGHT    | RIGHT  | RIGHT  |
-#define GPIO_PIN_05 GpioAction::BUTTON_PRESS_LEFT   // LEFT   | LEFT   | LEFT    | LEFT     | LEFT   | LEFT   |
-#define GPIO_PIN_06 GpioAction::BUTTON_PRESS_B1     // B1     | A      | B       | Cross    | 2      | K1     |
+
+// GP5/GP6 reassigned to USB host (DP/DM)
+#define GPIO_PIN_05 GpioAction::ASSIGNED_TO_ADDON
+#define GPIO_PIN_06 GpioAction::ASSIGNED_TO_ADDON
+
 #define GPIO_PIN_07 GpioAction::BUTTON_PRESS_B2     // B2     | B      | A       | Circle   | 3      | K2     |
 #define GPIO_PIN_08 GpioAction::BUTTON_PRESS_R2     // R2     | RT     | ZR      | R2       | 8      | K3     |
 #define GPIO_PIN_09 GpioAction::BUTTON_PRESS_L2     // L2     | LT     | ZL      | L2       | 7      | K4     |
@@ -39,7 +59,9 @@
 #define GPIO_PIN_15 GpioAction::ASSIGNED_TO_ADDON
 #define GPIO_PIN_28 GpioAction::ASSIGNED_TO_ADDON
 
+// ------------------------------------------------------------
 // Keyboard Mapping Configuration
+// ------------------------------------------------------------
 //                                            // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define KEY_DPAD_UP     HID_KEY_ARROW_UP      // UP     | UP     | UP      | UP       | UP     | UP     |
 #define KEY_DPAD_DOWN   HID_KEY_ARROW_DOWN    // DOWN   | DOWN   | DOWN    | DOWN     | DOWN   | DOWN   |
@@ -61,6 +83,9 @@
 #define KEY_BUTTON_A2   HID_KEY_F2            // A2     | ~      | Capture | ~        | 14     | ~      |
 #define KEY_BUTTON_FN   -1                    // Hotkey Function                                        |
 
+// ------------------------------------------------------------
+// Turbo / LEDs / Display (unchanged from your file)
+// ------------------------------------------------------------
 #define TURBO_ENABLED 1
 #define GPIO_PIN_14 GpioAction::BUTTON_PRESS_TURBO
 #define TURBO_LED_PIN 15
