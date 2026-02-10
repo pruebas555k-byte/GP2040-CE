@@ -12,6 +12,11 @@
 #define BOARD_CONFIG_LABEL "Pico"
 
 // ------------------------------------------------------------
+// Enable Gamepad USB Host addon by default (first boot / unset config)
+// ------------------------------------------------------------
+#define GAMEPAD_USB_HOST_ENABLED 1
+
+// ------------------------------------------------------------
 // PIO-USB Host (TinyUSB Host over PIO-USB)
 // ------------------------------------------------------------
 // Enable PIO USB peripheral block used for USB Host
@@ -84,7 +89,7 @@
 #define KEY_BUTTON_FN   -1                    // Hotkey Function                                        |
 
 // ------------------------------------------------------------
-// Turbo / LEDs / Display (unchanged from your file)
+// Turbo / LEDs / Display
 // ------------------------------------------------------------
 #define TURBO_ENABLED 1
 #define GPIO_PIN_14 GpioAction::BUTTON_PRESS_TURBO
