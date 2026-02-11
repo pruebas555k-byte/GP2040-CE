@@ -13,19 +13,17 @@
 #define ANTI_RECOIL_STRENGTH 2500 
 
 // --- ESTRUCTURA DEL OUT REPORT PARA PS5 (DualSense) ---
-// Tamaño exacto = 48 bytes (lo que espera el DualSense por USB)
-// Offsets verificados contra el código PS5Host que SÍ funciona
 #pragma pack(push, 1)
 struct DS5OutReport {
     uint8_t report_id;          // Byte 0:  0x02 para USB
     uint8_t control_flag[2];    // Byte 1-2: [0]=2, [1]=2
     uint8_t motor_right;        // Byte 3
     uint8_t motor_left;         // Byte 4
-    uint8_t reserved1[4];       // Byte 5-8: headphone, speaker, mic vol, audio flags
+    uint8_t reserved1[4];       // Byte 5-8
     uint8_t mute_button_led;    // Byte 9
     uint8_t reserved2[7];       // Byte 10-16
-    uint8_t reserved3[5];       // Byte 17-21: right trigger effect
-    uint8_t reserved4[5];       // Byte 22-26: left trigger effect
+    uint8_t reserved3[5];       // Byte 17-21
+    uint8_t reserved4[5];       // Byte 22-26
     uint8_t reserved5[6];       // Byte 27-32
     uint8_t reserved6[5];       // Byte 33-37
     uint8_t led_control_flag;   // Byte 38
@@ -36,7 +34,7 @@ struct DS5OutReport {
     uint8_t lightbar_red;       // Byte 44
     uint8_t lightbar_green;     // Byte 45
     uint8_t lightbar_blue;      // Byte 46
-    uint8_t padding;            // Byte 47  (total = 48 bytes)
+    uint8_t padding;            // Byte 47
 };
 #pragma pack(pop)
 
@@ -66,17 +64,29 @@ static uint32_t macro_mute_start_time = 0;
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
 
-// Variable para saber si necesitamos actualizar el LED del PS5
+// Variable para saber si necesitamos actualizar el LED del PS5 durante el juego
 static bool ds5_led_needs_update = true;
+
+// --- FIX: NUEVA VARIABLE DE ESTADO ---
+// Esta variable nos dice: "El mando PS5 está conectado, pero aún no he prendido las luces"
+static bool ds5_pending_init = false; 
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
+    ds5_pending_init = false; // Resetear al inicio
 #if GAMEPAD_HOST_DEBUG
     stdio_init_all();
 #endif
 }
 
 void GamepadUSBHostListener::process() {
+    // --- FIX: INICIALIZACIÓN DIFERIDA DEL PS5 ---
+    // Si el mando está conectado pero pendiente de iniciar, lo hacemos aquí (fuera del callback mount)
+    if (_controller_host_enabled && ds5_pending_init) {
+        init_ds5_led(_controller_dev_addr, _controller_instance);
+        ds5_pending_init = false; // Marcamos como listo
+    }
+
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
     
     gamepad->hasAnalogTriggers   = _controller_host_analog;
@@ -126,20 +136,24 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     switch(controller_pid)
     {
         case PS4_PRODUCT_ID:       
-        case 0x00EE:               
+        case 0x00EE:                
         case PS4_WHEEL_PRODUCT_ID: 
-        case 0xB67B:               
+        case 0xB67B:                
             init_ds4(desc_report, desc_len);
             break;
         case DS4_ORG_PRODUCT_ID:   
-        case DS4_PRODUCT_ID:       
+        case DS4_PRODUCT_ID:        
             isDS4Identified = true;
             setup_ds4();
             break;
         case 0x0CE6: // DualSense PS5
             isDS4Identified = true;
             ds5_led_needs_update = true;
-            init_ds5_led(dev_addr, instance);
+            
+            // --- FIX: NO LLAMAMOS A init_ds5_led AQUÍ ---
+            // Solo marcamos que está pendiente. process() lo hará después.
+            // Si lo hacemos aquí, tuh_hid_send_report fallará o bloqueará el sistema.
+            ds5_pending_init = true;
             break;
         default:
             break;
@@ -158,30 +172,25 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     isDS4Identified = false;
     hasDS4DefReport = false;
     ds5_led_needs_update = true;
+    ds5_pending_init = false;
 }
 
 // --------------------------------------------------------------------------------
-//        INICIALIZACIÓN LED PS5 (DualSense) - BASADO EN PS5Host QUE FUNCIONA
+//        INICIALIZACIÓN LED PS5 (DualSense) - AHORA LLAMADO DESDE PROCESS()
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    // =====================================================================
-    // CLAVE: El código PS5Host que funciona hace 2 cosas diferentes:
-    // 1. Usa un while loop con tuh_task() para GARANTIZAR que se envíe
-    // 2. Usa report_id = CONTROL (no RUMBLE) para el primer envío de LED
-    // =====================================================================
-
     DS5OutReport out_report;
     std::memset(&out_report, 0, sizeof(DS5OutReport));
 
-    // --- PASO 1: Enviar configuración de LED (igual que PS5Host::initialize) ---
-    out_report.report_id = 0x02;        // PS5::OutReportID::CONTROL = 0x02 para USB
-    out_report.control_flag[0] = 2;     // Exacto como PS5Host
-    out_report.control_flag[1] = 2;     // Exacto como PS5Host
-    out_report.led_control_flag = 0x01 | 0x02;  // Exacto como PS5Host (mic LED + lightbar)
-    out_report.pulse_option = 1;        // Exacto como PS5Host
-    out_report.led_brightness = 0xFF;   // Exacto como PS5Host (0xFF, NO 0x00 ni 0x02)
-    out_report.player_number = 1;       // Player 1
+    // Configuración para prender LED (Reporte 0x02)
+    out_report.report_id = 0x02;        
+    out_report.control_flag[0] = 2;     
+    out_report.control_flag[1] = 2;     
+    out_report.led_control_flag = 0x01 | 0x02;  // Mic LED + Lightbar
+    out_report.pulse_option = 1;        
+    out_report.led_brightness = 0xFF;   
+    out_report.player_number = 1;       
 
     // Color según perfil
     if (current_profile == PROFILE_EAFC) {
@@ -194,22 +203,16 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
-    // CLAVE: while loop con tuh_task() - EXACTO como PS5Host que funciona
-    // Sin esto, el reporte puede perderse porque el USB no está listo
+    // --- FIX: ENVÍO SEGURO CON LOOP ---
+    // Como ahora estamos en process(), este loop es seguro y necesario.
+    // Garantiza que el comando llegue al mando.
     while (!tuh_hid_send_report(dev_addr, instance, 0, &out_report, sizeof(DS5OutReport)))
     {
-        tuh_task();
+        tuh_task(); // Mantenemos vivo el USB mientras esperamos
     }
 
-    // --- PASO 2: Reconfigurar para uso continuo (rumble + player LEDs) ---
-    // Igual que PS5Host: después del LED, resetea el out_report para rumble
-    std::memset(&out_report, 0, sizeof(DS5OutReport));
-    out_report.report_id = 0x02;
-    out_report.control_flag[0] = 2;
-    out_report.control_flag[1] = 2;
-    out_report.led_control_flag = 0x04;  // Solo player LEDs para uso continuo
-
-    // CLAVE: Iniciar recepción de reportes del mando
+    // --- IMPORTANTE: COMENZAR A ESCUCHAR ---
+    // Ahora que ya prendimos la luz, le decimos al sistema que empiece a recibir botones.
     tuh_hid_receive_report(dev_addr, instance);
 
     ds5_led_needs_update = false;
@@ -230,11 +233,11 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
     switch(controller_pid)
     {
         case DS4_ORG_PRODUCT_ID:   
-        case DS4_PRODUCT_ID:       
-        case PS4_PRODUCT_ID:       
+        case DS4_PRODUCT_ID:        
+        case PS4_PRODUCT_ID:        
         case PS4_WHEEL_PRODUCT_ID: 
-        case 0xB67B:               
-        case 0x00EE:               
+        case 0xB67B:                
+        case 0x00EE:                
             if (isDS4Identified) process_ds4(report, len);
             break;
         case 0x0CE6: // DualSense
@@ -482,12 +485,15 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
         }
+        
+        // Seguir recibiendo reportes
+        tuh_hid_receive_report(dev_addr, instance);
     }
     prev_ds_report = controller_report;
 }
 
 // --------------------------------------------------------------------------------
-//                          UPDATE LEDs PS5 (DualSense)
+//                           UPDATE LEDs PS5 (DualSense)
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ds5() {
@@ -514,7 +520,7 @@ void GamepadUSBHostListener::update_ds5() {
         out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
-    // Usar while + tuh_task() como PS5Host
+    // Usar while + tuh_task()
     while (!tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0, &out_report, sizeof(DS5OutReport)))
     {
         tuh_task();
@@ -541,7 +547,6 @@ void GamepadUSBHostListener::update_ctrlr() {
 
 void GamepadUSBHostListener::update_ds4() {
 #if GAMEPAD_HOST_USE_FEATURES
-    // FUNCIÓN VACÍA - SIN VIBRACIÓN NI LEDS PARA EVITAR ERRORES
 #endif
 }
 
