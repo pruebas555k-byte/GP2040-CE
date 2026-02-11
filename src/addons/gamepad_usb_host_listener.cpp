@@ -9,23 +9,22 @@
 #include "drivers/ps4/PS4Driver.h"
 
 // --- CONFIGURACIÓN ---
-// Fuerza del Anti-Recoil (Más alto = baja más la mira)
 #define ANTI_RECOIL_STRENGTH 1200 
 
 enum Profile {
-    PROFILE_EAFC,   // Perfil EA FC (Gatillos invertidos + Macro Mute)
-    PROFILE_WARZONE // Perfil Warzone (Anti-Recoil + Turbo L1)
+    PROFILE_EAFC,   // LED ROJO
+    PROFILE_WARZONE // LED AZUL
 };
 
 static Profile current_profile = PROFILE_EAFC; 
 static uint32_t profile_switch_timer = 0;
 static bool profile_switch_held = false;
 
-// Variables Macro Mute (EA FC)
+// Variables Macro Mute
 static bool macro_mute_active = false;
 static uint32_t macro_mute_start_time = 0;
 
-// Variables Macro Turbo (Warzone)
+// Variables Macro Turbo
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
 
@@ -42,7 +41,6 @@ void GamepadUSBHostListener::process() {
     gamepad->hasLeftAnalogStick  = _controller_host_analog;
     gamepad->hasRightAnalogStick = _controller_host_analog;
     
-    // Aplicar estados al gamepad global
     gamepad->state.dpad     |= _controller_host_state.dpad;
     gamepad->state.buttons  |= _controller_host_state.buttons;
     gamepad->state.lx       = _controller_host_state.lx;
@@ -74,7 +72,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     controller_vid = vid;
     controller_pid = pid;
 
-    // Centrar Sticks al inicio
     uint16_t joystick_mid = GAMEPAD_JOYSTICK_MID;
     _controller_host_state.lx = joystick_mid;
     _controller_host_state.ly = joystick_mid;
@@ -83,7 +80,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad = 0;
 
-    // Detectar tipo de mando PS4/PS5
     switch(controller_pid)
     {
         case PS4_PRODUCT_ID:       
@@ -114,10 +110,6 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     isDS4Identified = false;
     hasDS4DefReport = false;
 }
-
-// --------------------------------------------------------------------------------
-//                                  PROCESAMIENTO DE REPORTES
-// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     if ( _controller_host_enabled == false ) return;
@@ -157,16 +149,13 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        // Ejecutar si hay cambios, o si hay macros/turbo activos
         if ( diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state) {
             
-            // 1. Mapeo Base de Sticks
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             
-            // 2. Limpieza de Gatillos y Botones
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
             _controller_host_state.buttons = 0;
@@ -178,74 +167,69 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     profile_switch_held = true;
                     profile_switch_timer = getMillis();
                 } else if (getMillis() - profile_switch_timer > 2000) {
-                    // Switch
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
                     
-                    profile_switch_timer = getMillis() + 5000; // Delay para no spamear cambio
+                    profile_switch_timer = getMillis() + 5000;
                 }
             } else {
                 profile_switch_held = false;
             }
 
-            // ================= PERFIL 1: EA FC 26 =================
+            // ================= PERFIL 1: EA FC 26 (LED ROJO) =================
             if (current_profile == PROFILE_EAFC) {
-                // >>>> MACRO MUTE (Activador: Botón PS) <<<<
+                // Macro Mute (PS Button)
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
                 }
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 480) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3; // Cuadrado
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B2; // Círculo
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B2;
                     } else {
                         macro_mute_active = false;
                     }
                 }
 
-                // >>>> REMAPEO GATILLOS INVERTIDOS <<<<
-                if (controller_report.buttonR1) _controller_host_state.rt = 255; // R1 -> R2
-                if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1; // L1 -> L1
-                if (controller_report.buttonR2 || controller_report.rightTrigger > 10) _controller_host_state.lt = 255; // R2 -> L2
-                if (controller_report.buttonL2 || controller_report.leftTrigger > 10) _controller_host_state.buttons |= GAMEPAD_MASK_R1; // L2 -> R1
+                // Gatillos Invertidos
+                if (controller_report.buttonR1) _controller_host_state.rt = 255;
+                if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+                if (controller_report.buttonR2 || controller_report.rightTrigger > 10) _controller_host_state.lt = 255;
+                if (controller_report.buttonL2 || controller_report.leftTrigger > 10) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
-                // Botones normales
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
 
-            // ================= PERFIL 2: WARZONE =================
+            // ================= PERFIL 2: WARZONE (LED AZUL) =================
             else if (current_profile == PROFILE_WARZONE) {
-                // >>>> ANTI-RECOIL (Al pulsar L2 + R2) <<<<
-                // Si presionas ambos gatillos (apuntar + disparar)
+                // Anti-Recoil (L2 + R2)
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
-                    // Bajamos la mira sumando al eje Y derecho
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
                     _controller_host_state.ry = recoil_val;
                 }
 
-                // >>>> MACRO TURBO X en L1 <<<<
+                // Turbo L1
                 if (controller_report.buttonL1) {
-                    if (getMillis() - turbo_timer > 40) { // Velocidad del turbo
+                    if (getMillis() - turbo_timer > 40) {
                         turbo_state = !turbo_state;
                         turbo_timer = getMillis();
                     }
-                    if (turbo_state) _controller_host_state.buttons |= GAMEPAD_MASK_B1; // X / Cruz
+                    if (turbo_state) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
                 } else {
                     turbo_state = false;
                 }
 
-                // >>>> REMAPEO SELECT es L1 <<<<
+                // Select -> L1
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
 
-                // >>>> ESTÁNDAR <<<<
                 if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-                if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1; // PS Normal
+                if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
 
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
@@ -338,14 +322,12 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
             // ================= PERFIL 2: WARZONE =================
             else if (current_profile == PROFILE_WARZONE) {
-                // >>>> ANTI-RECOIL <<<<
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
                     _controller_host_state.ry = recoil_val;
                 }
 
-                // >>>> TURBO X EN L1 <<<<
                 if (controller_report.buttonL1) {
                     if (getMillis() - turbo_timer > 40) {
                         turbo_state = !turbo_state;
@@ -356,7 +338,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     turbo_state = false;
                 }
 
-                // >>>> SELECT ES L1 <<<<
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
@@ -397,7 +378,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
-    // Actualización de Rumble / LEDs para PS4/PS5
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
         controller_pid == 0xB67B || controller_pid == 0x00EE) {
@@ -405,7 +385,6 @@ void GamepadUSBHostListener::update_ctrlr() {
     }
 }
 
-// Helpers requeridos
 bool GamepadUSBHostListener::host_get_report(uint8_t report_id, void* report, uint16_t len) {
     awaiting_cb = true;
     return tuh_hid_get_report(_controller_dev_addr, _controller_instance, report_id, HID_REPORT_TYPE_FEATURE, report, len);
@@ -454,6 +433,7 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
         }
     }
 }
+
 void GamepadUSBHostListener::update_ds4() {
 #if GAMEPAD_HOST_USE_FEATURES
     Gamepad * gamepad = Storage::getInstance().GetProcessedGamepad();
@@ -461,30 +441,30 @@ void GamepadUSBHostListener::update_ds4() {
     memset(&controller_output, 0, sizeof(controller_output));
     controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
 
-    if (ds4Config.features.enableLED && gamepad->auxState.sensors.statusLight.enabled) {
-        controller_output.enableUpdateLED = gamepad->auxState.sensors.statusLight.enabled;
-        controller_output.ledRed = gamepad->auxState.sensors.statusLight.color.red;
-        controller_output.ledGreen = gamepad->auxState.sensors.statusLight.color.green;
-        controller_output.ledBlue = gamepad->auxState.sensors.statusLight.color.blue;
-        controller_output.ledBlinkOn = gamepad->auxState.playerID.ledBlinkOn;
-        controller_output.ledBlinkOff = gamepad->auxState.playerID.ledBlinkOff;
+    // --- AQUÍ ESTÁ EL CAMBIO DE COLOR FORZADO ---
+    
+    // Forzar actualización de LEDs
+    controller_output.enableUpdateLED = 1; 
+
+    if (current_profile == PROFILE_WARZONE) {
+        // AZUL (Warzone)
+        controller_output.ledRed = 0;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 255;
+    } else {
+        // ROJO (EA FC)
+        controller_output.ledRed = 255;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 0;
     }
 
     if (ds4Config.features.enableRumble) {
-        // FeedBack Vibración al cambiar de perfil
-        if (getMillis() < profile_switch_timer) { 
-             // Vibración suave temporal al cambiar
-             controller_output.enableUpdateRumble = 1;
-             controller_output.rumbleLeft = (current_profile == PROFILE_WARZONE) ? 100 : 0; 
-             controller_output.rumbleRight = (current_profile == PROFILE_EAFC) ? 100 : 0;
-        } else {
-            // Vibración normal del juego
-            gamepad->auxState.haptics.leftActuator.enabled = 1;
-            gamepad->auxState.haptics.rightActuator.enabled = 1;
-            controller_output.enableUpdateRumble = 1;
-            controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
-            controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
-        }
+        // Vibración normal del juego
+        gamepad->auxState.haptics.leftActuator.enabled = 1;
+        gamepad->auxState.haptics.rightActuator.enabled = 1;
+        controller_output.enableUpdateRumble = 1;
+        controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
+        controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
     }
 
     void * report = &controller_output;
@@ -493,7 +473,7 @@ void GamepadUSBHostListener::update_ds4() {
 #endif
 }
 
-// Funciones vacías/placeholders para mantener la estructura original si es necesaria
+// Funciones vacías
 void GamepadUSBHostListener::update_switch_pro() {}
 void GamepadUSBHostListener::setup_switch_pro(uint8_t const *report, uint16_t len) {}
 void GamepadUSBHostListener::process_switch_pro(uint8_t const *report, uint16_t len) {}
