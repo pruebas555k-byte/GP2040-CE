@@ -12,8 +12,8 @@
 #define ANTI_RECOIL_STRENGTH 1200 
 
 enum Profile {
-    PROFILE_EAFC,   
-    PROFILE_WARZONE 
+    PROFILE_EAFC,   // LED ROJO
+    PROFILE_WARZONE // LED AZUL
 };
 
 static Profile current_profile = PROFILE_EAFC; 
@@ -69,8 +69,8 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_dev_addr = dev_addr;
     _controller_instance = instance;
     
-    // CORRECCIÓN: Usamos 0 en lugar de xinput_type_t para evitar el error de compilación
-    _controller_type = 0; 
+    // CORRECCIÓN: Usamos 0 para evitar error de compilación xinput_type_t
+    _controller_type = 0;
     
     controller_vid = vid;
     controller_pid = pid;
@@ -171,7 +171,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            // --- CAMBIO DE PERFIL (Select + Start > 2 seg) ---
+            // --- CAMBIO DE PERFIL ---
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -179,7 +179,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else if (getMillis() - profile_switch_timer > 2000) {
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
-                    
                     profile_switch_timer = getMillis() + 5000;
                 }
             } else {
@@ -188,7 +187,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
-                // Macro Mute (Activador: Botón PS)
+                // Macro Mute (PS Button)
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
@@ -384,11 +383,11 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 }
 
 // --------------------------------------------------------------------------------
-//                                  UPDATE LEDS Y VIBRACIÓN
+//                                  UPDATE LEDS (SIN VIBRACIÓN)
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
-    // IMPORTANTE: Aquí se agregaron todos los IDs, incluido DualSense (0x0CE6)
+    // AGREGADO 0x0CE6 (DualSense) PARA QUE LE LLEGUEN LOS LEDS
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
         controller_pid == 0xB67B || controller_pid == 0x00EE || controller_pid == 0x0CE6) {
@@ -404,26 +403,25 @@ void GamepadUSBHostListener::update_ds4() {
     memset(&controller_output, 0, sizeof(controller_output));
     controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
 
-    // SIN LEDS - Se eliminó la configuración de color para evitar errores
+    // --- CAMBIO DE COLOR FORZADO ---
+    
+    // Forzar actualización de LEDs
+    controller_output.enableUpdateLED = 1; 
 
-    if (ds4Config.features.enableRumble) {
-        // Vibración normal del juego + Feedback de cambio de perfil
-        if (getMillis() < profile_switch_timer) { 
-             // Feedback de vibración:
-             // EA FC = Vibración derecha suave
-             // WARZONE = Vibración izquierda suave
-             controller_output.enableUpdateRumble = 1;
-             controller_output.rumbleLeft = (current_profile == PROFILE_WARZONE) ? 80 : 0; 
-             controller_output.rumbleRight = (current_profile == PROFILE_EAFC) ? 80 : 0;
-        } else {
-            // Juego normal
-            gamepad->auxState.haptics.leftActuator.enabled = 1;
-            gamepad->auxState.haptics.rightActuator.enabled = 1;
-            controller_output.enableUpdateRumble = 1;
-            controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
-            controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
-        }
+    if (current_profile == PROFILE_WARZONE) {
+        // AZUL (Warzone)
+        controller_output.ledRed = 0;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 255;
+    } else {
+        // ROJO (EA FC)
+        controller_output.ledRed = 255;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 0;
     }
+
+    // --- VIBRACIÓN ELIMINADA ---
+    // No activamos enableUpdateRumble ni enviamos valores de vibración.
 
     void * report = &controller_output;
     uint16_t report_size = sizeof(controller_output)-1;
