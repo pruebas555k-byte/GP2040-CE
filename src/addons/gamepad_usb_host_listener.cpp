@@ -428,42 +428,44 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             
-            // --- CORRECCIÓN FINAL GATILLOS ---
-            // Ponemos los gatillos virtuales en 0 POR DEFECTO.
-            // Eliminamos la lectura directa del hardware.
+            // --- CORRECCIÓN DEFINITIVA DE GATILLOS Y REMAPEO (PS4/DS4) ---
+            
+            // 1. LIMPIEZA TOTAL: Forzamos a cero para evitar "doble activación"
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
+            _controller_host_buttons = 0; // Usar una variable temporal o limpiar directo
+            _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            _controller_host_state.buttons = 0;
+            // 2. LÓGICA DE REMAPEO EXCLUSIVA
+            // Aquí asignamos valor SOLO si se cumple la condición, sin leer el hardware original para ese canal.
 
-            // --- LÓGICA DE REMAPEO ESTRICTA ---
-            
-            // 1. Botón L1 -> L1 (Sin cambios)
-            if (controller_report.buttonL1) {
-                _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-            }
-
-            // 2. Botón R1 -> Gatillo R2 (Al 100%)
+            // CASO A: Botón Físico R1 --> Gatillo Derecho Virtual (RT) al 100%
             if (controller_report.buttonR1) {
                 _controller_host_state.rt = 255;
             }
 
-            // 3. Gatillo Físico L2 -> Botón R1
-            // Se activa si pulsas el botón del gatillo O si el analógico pasa un poco (zona muerta > 10)
-            if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
-                _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                // NOTA: NO asignamos nada a .lt aquí, así que el gatillo izquierdo virtual se queda en 0.
+            // CASO B: Botón Físico L1 --> Botón Virtual L1 (Estándar)
+            if (controller_report.buttonL1) {
+                _controller_host_state.buttons |= GAMEPAD_MASK_L1;
             }
 
-            // 4. Gatillo Físico R2 -> Gatillo L2 (Al 100%)
+            // CASO C: Gatillo Físico R2 --> Gatillo Izquierdo Virtual (LT) al 100%
+            // Detectamos si es botón o analógico (>10)
             if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
                 _controller_host_state.lt = 255;
-                // NOTA: NO asignamos nada a .rt aquí, así que el gatillo derecho virtual no se mezcla.
+                // Importante: Al hacer esto, NO tocamos RT ni Buttons, así que R2 solo afecta a LT.
+            }
+
+            // CASO D: Gatillo Físico L2 --> Botón Virtual R1
+            if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
+                _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                // Importante: Al hacer esto, NO tocamos LT, así que L2 no afecta a los gatillos analógicos.
             }
 
             // --- FIN REMAPEO ---
 
+            // Resto de botones que no conflictoan con L1/R1/L2/R2
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
@@ -508,28 +510,38 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             
-            // --- CORRECCIÓN DUALSENSE (MISMA LÓGICA) ---
+            // --- CORRECCIÓN DEFINITIVA DE GATILLOS Y REMAPEO (PS5/DualSense) ---
+            // Aplicamos EXACTAMENTE la misma lógica que en process_ds4 por si el mando se detecta aquí.
+
+            // 1. LIMPIEZA
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
-            _controller_host_analog = true;
             _controller_host_state.buttons = 0;
+            _controller_host_analog = true;
 
-            // L1 -> L1
-            if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-            
-            // R1 -> R2 (100%)
-            if (controller_report.buttonR1) _controller_host_state.rt = 255;
+            // 2. LÓGICA DE REMAPEO EXCLUSIVA
 
-            // L2 (Físico) -> R1 (Botón)
+            // CASO A: Botón Físico R1 --> Gatillo Derecho Virtual (RT) al 100%
+            if (controller_report.buttonR1) {
+                _controller_host_state.rt = 255;
+            }
+
+            // CASO B: Botón Físico L1 --> Botón Virtual L1
+            if (controller_report.buttonL1) {
+                _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+            }
+
+            // CASO C: Gatillo Físico R2 --> Gatillo Izquierdo Virtual (LT) al 100%
+            if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
+                _controller_host_state.lt = 255;
+            }
+
+            // CASO D: Gatillo Físico L2 --> Botón Virtual R1
             if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
                 _controller_host_state.buttons |= GAMEPAD_MASK_R1;
             }
 
-            // R2 (Físico) -> L2 (100%)
-            if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
-                _controller_host_state.lt = 255;
-            }
-            // --------------------------------------------
+            // --- FIN REMAPEO ---
 
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
