@@ -9,11 +9,11 @@
 #include "drivers/ps4/PS4Driver.h"
 
 // --- CONFIGURACIÓN ---
-#define ANTI_RECOIL_STRENGTH 2500 
+#define ANTI_RECOIL_STRENGTH 1200 
 
 enum Profile {
-    PROFILE_EAFC,
-    PROFILE_WARZONE
+    PROFILE_EAFC,   // LED ROJO
+    PROFILE_WARZONE // LED AZUL
 };
 
 static Profile current_profile = PROFILE_EAFC; 
@@ -38,13 +38,11 @@ void GamepadUSBHostListener::setup() {
 void GamepadUSBHostListener::process() {
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
     
-    // Asignación de capacidades analógicas
     gamepad->hasAnalogTriggers   = _controller_host_analog;
     gamepad->hasLeftAnalogStick  = _controller_host_analog;
     gamepad->hasRightAnalogStick = _controller_host_analog;
     
-    // --- CORRECCIÓN CRÍTICA: USAR ASIGNACIÓN (=) ---
-    // Esto evita que los botones y flechas se queden "pegados"
+    // --- IMPORTANTE: ASIGNACIÓN DIRECTA (=) PARA EVITAR QUE SE PEGUEN ---
     gamepad->state.dpad     = _controller_host_state.dpad;
     gamepad->state.buttons  = _controller_host_state.buttons;
     
@@ -73,7 +71,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_enabled = true;
     _controller_dev_addr = dev_addr;
     _controller_instance = instance;
-    _controller_type = 0; // 0 para evitar errores de compilación xinput
+    _controller_type = 0; 
     controller_vid = vid;
     controller_pid = pid;
 
@@ -99,7 +97,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             setup_ds4();
             break;
         case 0x0CE6: // DualSense
-            isDS4Identified = true; 
+            isDS4Identified = true; // Necesario para entrar al loop de update
             break;
         default:
             break;
@@ -155,14 +153,13 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
 
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
-    static PS4Report prev_report = { 0 };
     uint8_t const report_id = report[0];
 
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        // Verificamos cambios o si hay macros activas
-        if ( diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state) {
+        // Procesamos siempre para limpiar estados (fix D-Pad)
+        if (true) {
             
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
@@ -191,21 +188,19 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
-                // Macro Mute (Activador: Botón PS)
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
                 }
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 480) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3; // Cuadrado
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B2; // Círculo
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B2;
                     } else {
                         macro_mute_active = false;
                     }
                 }
 
-                // Gatillos Invertidos
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 if (controller_report.buttonR2 || controller_report.rightTrigger > 10) _controller_host_state.lt = 255;
@@ -217,14 +212,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             // --- PERFIL 2: WARZONE ---
             else if (current_profile == PROFILE_WARZONE) {
-                // Anti-Recoil (L2 + R2)
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
                     _controller_host_state.ry = recoil_val;
                 }
 
-                // Turbo L1
                 if (controller_report.buttonL1) {
                     if (getMillis() - turbo_timer > 40) {
                         turbo_state = !turbo_state;
@@ -235,7 +228,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     turbo_state = false;
                 }
 
-                // Select -> L1
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
@@ -253,7 +245,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
 
-            _controller_host_state.dpad = 0; // LIMPIEZA DE DPAD ANTES DE ASIGNAR
+            _controller_host_state.dpad = 0; // LIMPIEZA OBLIGATORIA
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
             if (controller_report.dpad == PS4_HAT_UPRIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_UP | GAMEPAD_MASK_RIGHT;
             if (controller_report.dpad == PS4_HAT_RIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_RIGHT;
@@ -269,7 +261,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
         }
     }
-    prev_report = controller_report;
 }
 
 // --------------------------------------------------------------------------------
@@ -278,13 +269,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
-    static DSReport prev_ds_report = { 0 };
     uint8_t const report_id = report[0];
 
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if ( prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state) {
+        if (true) { // Procesar siempre
             
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
@@ -369,7 +359,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
 
-            _controller_host_state.dpad = 0; // LIMPIEZA DE DPAD
+            _controller_host_state.dpad = 0; // LIMPIEZA OBLIGATORIA
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
             if (controller_report.dpad == PS4_HAT_UPRIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_UP | GAMEPAD_MASK_RIGHT;
             if (controller_report.dpad == PS4_HAT_RIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_RIGHT;
@@ -385,17 +375,17 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
         }
     }
-    prev_ds_report = controller_report;
 }
 
 // --------------------------------------------------------------------------------
-//                                  UPDATE LEDS (VACÍO)
+//                         UPDATE LEDS (PS4 & PS5 DUALSENSE)
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
+    // Si tenemos un mando de Sony identificado
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
-        controller_pid == 0xB67B || controller_pid == 0x00EE) {
+        controller_pid == 0xB67B || controller_pid == 0x00EE || controller_pid == 0x0CE6) {
         
         if (isDS4Identified) update_ds4();
     }
@@ -403,11 +393,54 @@ void GamepadUSBHostListener::update_ctrlr() {
 
 void GamepadUSBHostListener::update_ds4() {
 #if GAMEPAD_HOST_USE_FEATURES
-    // FUNCIÓN VACÍA - SIN VIBRACIÓN NI LEDS PARA EVITAR ERRORES
+    uint8_t r = 0, g = 0, b = 0;
+
+    // DEFINIR COLOR
+    if (current_profile == PROFILE_WARZONE) {
+        b = 255; // Azul
+    } else {
+        r = 255; // Rojo
+    }
+
+    // --- CASO 1: MANDO PS5 (DualSense) ---
+    // Usamos el reporte USB nativo del DualSense (0x31) porque el de PS4 no le sirve.
+    if (controller_pid == 0x0CE6) {
+        uint8_t ds5_report[48];
+        memset(ds5_report, 0, sizeof(ds5_report));
+        
+        ds5_report[0] = 0x31; // Report ID para DualSense (USB)
+        ds5_report[1] = 0x02; // Config bits
+        
+        // Byte 39 (Offset 39): Flags. 0x02 = Update LEDs.
+        ds5_report[39] = 0x02; 
+        
+        // Colores en offsets 45, 46, 47
+        ds5_report[45] = r;
+        ds5_report[46] = g;
+        ds5_report[47] = b;
+        
+        tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0x31, ds5_report, 48);
+    }
+    // --- CASO 2: MANDO PS4 (DualShock 4) ---
+    else {
+        PS4FeatureOutputReport controller_output;
+        memset(&controller_output, 0, sizeof(controller_output));
+        controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
+        
+        controller_output.enableUpdateLED = 1;
+        controller_output.ledRed = r;
+        controller_output.ledGreen = g;
+        controller_output.ledBlue = b;
+
+        // Rumble desactivado
+        controller_output.enableUpdateRumble = 0;
+
+        tuh_hid_send_report(_controller_dev_addr, _controller_instance, 5, (uint8_t*)&controller_output + 1, sizeof(controller_output) - 1);
+    }
 #endif
 }
 
-// Helpers
+// Helpers y funciones vacías
 bool GamepadUSBHostListener::host_get_report(uint8_t report_id, void* report, uint16_t len) {
     awaiting_cb = true;
     return tuh_hid_get_report(_controller_dev_addr, _controller_instance, report_id, HID_REPORT_TYPE_FEATURE, report, len);
