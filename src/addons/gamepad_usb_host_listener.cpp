@@ -9,11 +9,11 @@
 #include "drivers/ps4/PS4Driver.h"
 
 // --- CONFIGURACIÓN ---
-#define ANTI_RECOIL_STRENGTH 1200 
+#define ANTI_RECOIL_STRENGTH 1200 // Fuerza de bajada de mira en Warzone
 
 enum Profile {
-    PROFILE_EAFC,   // LED ROJO
-    PROFILE_WARZONE // LED AZUL
+    PROFILE_EAFC,   // LED ROJO: Gatillos invertidos + Mute
+    PROFILE_WARZONE // LED AZUL: Anti-Recoil + Turbo
 };
 
 static Profile current_profile = PROFILE_EAFC; 
@@ -93,6 +93,11 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             isDS4Identified = true;
             setup_ds4();
             break;
+        case 0x0CE6: // DualSense
+            // Para DualSense a veces no se requiere setup explícito si usas HID genérico,
+            // pero marcamos identificado para asegurar updates.
+            isDS4Identified = true; 
+            break;
         default:
             break;
     }
@@ -110,6 +115,10 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     isDS4Identified = false;
     hasDS4DefReport = false;
 }
+
+// --------------------------------------------------------------------------------
+//                                  REPORTES
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     if ( _controller_host_enabled == false ) return;
@@ -138,7 +147,7 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
 }
 
 // --------------------------------------------------------------------------------
-//                                  LÓGICA DEL MANDO PS4
+//                                  LÓGICA PS4
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
@@ -161,7 +170,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            // ================= CAMBIO DE PERFIL (Select + Start 2seg) =================
+            // --- CAMBIO DE PERFIL ---
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -169,14 +178,13 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else if (getMillis() - profile_switch_timer > 2000) {
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
-                    
                     profile_switch_timer = getMillis() + 5000;
                 }
             } else {
                 profile_switch_held = false;
             }
 
-            // ================= PERFIL 1: EA FC 26 (LED ROJO) =================
+            // --- PERFIL 1: EA FC 26 (LED ROJO) ---
             if (current_profile == PROFILE_EAFC) {
                 // Macro Mute (PS Button)
                 if (controller_report.buttonHome && !macro_mute_active) {
@@ -202,7 +210,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
 
-            // ================= PERFIL 2: WARZONE (LED AZUL) =================
+            // --- PERFIL 2: WARZONE (LED AZUL) ---
             else if (current_profile == PROFILE_WARZONE) {
                 // Anti-Recoil (L2 + R2)
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
@@ -235,7 +243,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
-            // ================= COMUNES =================
+            // --- COMUNES ---
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
@@ -259,7 +267,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 }
 
 // --------------------------------------------------------------------------------
-//                                  LÓGICA DEL MANDO PS5 (DualSense)
+//                                  LÓGICA PS5
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
@@ -282,7 +290,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            // ================= CAMBIO DE PERFIL =================
+            // --- CAMBIO DE PERFIL ---
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -296,7 +304,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 profile_switch_held = false;
             }
 
-            // ================= PERFIL 1: EA FC 26 =================
+            // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
@@ -320,7 +328,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
 
-            // ================= PERFIL 2: WARZONE =================
+            // --- PERFIL 2: WARZONE ---
             else if (current_profile == PROFILE_WARZONE) {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
@@ -350,7 +358,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
-            // ================= COMUNES =================
+            // --- COMUNES ---
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
@@ -374,17 +382,57 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 }
 
 // --------------------------------------------------------------------------------
-//                                  FUNCIONES AUXILIARES
+//                                  UPDATE LEDS Y VIBRACIÓN
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
+    // AQUI AGREGUÉ 0x0CE6 (DualSense) PARA QUE LE LLEGUEN LOS COLORES
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
-        controller_pid == 0xB67B || controller_pid == 0x00EE) {
+        controller_pid == 0xB67B || controller_pid == 0x00EE || controller_pid == 0x0CE6) {
         if (isDS4Identified) update_ds4();
     }
 }
 
+void GamepadUSBHostListener::update_ds4() {
+#if GAMEPAD_HOST_USE_FEATURES
+    Gamepad * gamepad = Storage::getInstance().GetProcessedGamepad();
+    PS4FeatureOutputReport controller_output;
+    memset(&controller_output, 0, sizeof(controller_output));
+    controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
+
+    // --- CAMBIO DE COLOR FORZADO ---
+    
+    // IMPORTANTE: Esto le dice al mando "Usa MI color, no el del sistema"
+    controller_output.enableUpdateLED = 1; 
+
+    if (current_profile == PROFILE_WARZONE) {
+        // AZUL (Warzone)
+        controller_output.ledRed = 0;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 255;
+    } else {
+        // ROJO (EA FC)
+        controller_output.ledRed = 255;
+        controller_output.ledGreen = 0;
+        controller_output.ledBlue = 0;
+    }
+
+    if (ds4Config.features.enableRumble) {
+        gamepad->auxState.haptics.leftActuator.enabled = 1;
+        gamepad->auxState.haptics.rightActuator.enabled = 1;
+        controller_output.enableUpdateRumble = 1;
+        controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
+        controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
+    }
+
+    void * report = &controller_output;
+    uint16_t report_size = sizeof(controller_output)-1;
+    tuh_hid_send_report(_controller_dev_addr, _controller_instance, 5, (uint8_t*)report+1, report_size);
+#endif
+}
+
+// Helpers
 bool GamepadUSBHostListener::host_get_report(uint8_t report_id, void* report, uint16_t len) {
     awaiting_cb = true;
     return tuh_hid_get_report(_controller_dev_addr, _controller_instance, report_id, HID_REPORT_TYPE_FEATURE, report, len);
@@ -432,45 +480,6 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
             break;
         }
     }
-}
-
-void GamepadUSBHostListener::update_ds4() {
-#if GAMEPAD_HOST_USE_FEATURES
-    Gamepad * gamepad = Storage::getInstance().GetProcessedGamepad();
-    PS4FeatureOutputReport controller_output;
-    memset(&controller_output, 0, sizeof(controller_output));
-    controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
-
-    // --- AQUÍ ESTÁ EL CAMBIO DE COLOR FORZADO ---
-    
-    // Forzar actualización de LEDs
-    controller_output.enableUpdateLED = 1; 
-
-    if (current_profile == PROFILE_WARZONE) {
-        // AZUL (Warzone)
-        controller_output.ledRed = 0;
-        controller_output.ledGreen = 0;
-        controller_output.ledBlue = 255;
-    } else {
-        // ROJO (EA FC)
-        controller_output.ledRed = 255;
-        controller_output.ledGreen = 0;
-        controller_output.ledBlue = 0;
-    }
-
-    if (ds4Config.features.enableRumble) {
-        // Vibración normal del juego
-        gamepad->auxState.haptics.leftActuator.enabled = 1;
-        gamepad->auxState.haptics.rightActuator.enabled = 1;
-        controller_output.enableUpdateRumble = 1;
-        controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
-        controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
-    }
-
-    void * report = &controller_output;
-    uint16_t report_size = sizeof(controller_output)-1;
-    tuh_hid_send_report(_controller_dev_addr, _controller_instance, 5, (uint8_t*)report+1, report_size);
-#endif
 }
 
 // Funciones vacías
