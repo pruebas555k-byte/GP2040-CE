@@ -84,6 +84,11 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad = 0;
 
+    // SIEMPRE intentar LED sin importar PID (prueba)
+    isDS4Identified = true;
+    ds5_led_needs_update = true;
+    init_ds5_led(dev_addr, instance);
+
     switch(controller_pid)
     {
         case PS4_PRODUCT_ID:
@@ -94,13 +99,9 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             break;
         case DS4_ORG_PRODUCT_ID:
         case DS4_PRODUCT_ID:
-            isDS4Identified = true;
             setup_ds4();
             break;
         case 0x0CE6:
-            isDS4Identified = true;
-            ds5_led_needs_update = true;
-            init_ds5_led(dev_addr, instance);
             break;
         default:
             break;
@@ -125,25 +126,34 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     uint8_t buf[47];
     memset(buf, 0, sizeof(buf));
 
-    // buf[0] = valid_flag0 (no necesitamos)
-    // buf[1] = valid_flag1: BIT(2)=lightbar + BIT(4)=player LEDs = 0x14
     buf[1]  = 0x14;
-    // buf[38] = valid_flag2: BIT(1)=lightbar setup = 0x02
     buf[38] = 0x02;
-    // buf[41] = lightbar_setup: BIT(0)=LIGHT_ON = 0x01
     buf[41] = 0x01;
-    // buf[42] = led_brightness
     buf[42] = 0x02;
-    // buf[43] = player_leds
     buf[43] = 0x04;
-    // buf[44] = RED, buf[45] = GREEN, buf[46] = BLUE
     buf[44] = LED_EAFC_R;
     buf[45] = LED_EAFC_G;
     buf[46] = LED_EAFC_B;
 
-    while (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47))
-    {
-        tuh_task();
+    // Intentar AMBAS formas de enviar
+    // Forma 1: report_id en la llamada, datos sin ID
+    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
+        // Forma 2: report_id=0, datos con ID incluido
+        uint8_t buf2[48];
+        memset(buf2, 0, sizeof(buf2));
+        buf2[0]  = 0x02;
+        buf2[2]  = 0x14;
+        buf2[39] = 0x02;
+        buf2[42] = 0x01;
+        buf2[43] = 0x02;
+        buf2[44] = 0x04;
+        buf2[45] = LED_EAFC_R;
+        buf2[46] = LED_EAFC_G;
+        buf2[47] = LED_EAFC_B;
+
+        while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
+            tuh_task();
+        }
     }
 
     last_led_profile = PROFILE_EAFC;
@@ -174,6 +184,8 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             process_ds(report, len);
             break;
         default:
+            // Si no matchea ninguno, intentar como DualSense
+            process_ds(report, len);
             break;
     }
 }
@@ -407,15 +419,10 @@ void GamepadUSBHostListener::update_ds5() {
     uint8_t buf[47];
     memset(buf, 0, sizeof(buf));
 
-    // valid_flag1: BIT(2)=lightbar + BIT(4)=player LEDs = 0x14
     buf[1]  = 0x14;
-    // valid_flag2: BIT(1)=lightbar setup = 0x02
     buf[38] = 0x02;
-    // lightbar_setup: LIGHT_ON = 0x01
     buf[41] = 0x01;
-    // led_brightness
     buf[42] = 0x02;
-    // player_leds
     buf[43] = 0x04;
 
     if (current_profile == PROFILE_WARZONE) {
@@ -437,14 +444,14 @@ void GamepadUSBHostListener::update_ds5() {
 }
 
 void GamepadUSBHostListener::update_ctrlr() {
+    // Siempre intentar actualizar LED
+    update_ds5();
+
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
         controller_pid == 0xB67B || controller_pid == 0x00EE) {
 
         if (isDS4Identified) update_ds4();
-    }
-    else if (controller_pid == 0x0CE6) {
-        update_ds5();
     }
 }
 
