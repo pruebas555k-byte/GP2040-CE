@@ -427,25 +427,53 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.lt = controller_report.leftTrigger;
-            _controller_host_state.rt = controller_report.rightTrigger;
+            
+            // --- CORRECCIÓN DE GATILLOS Y REMAPEO ---
+            // Primero, aseguramos que los gatillos analógicos estén en 0
+            // para evitar la "doble activación" del código original.
+            _controller_host_state.lt = 0;
+            _controller_host_state.rt = 0;
             _controller_host_analog = true;
 
             _controller_host_state.buttons = 0;
+
+            // --- REMAPEO PERSONALIZADO CON CLIC AL 100% ---
+
+            // 1. Botón Físico R1 -> Gatillo Virtual Derecho (RT) al 100%
+            if (controller_report.buttonR1) {
+                _controller_host_state.rt = 255;
+            }
+
+            // 2. Botón Físico L1 -> Botón Virtual L1 (Sin cambios)
+            if (controller_report.buttonL1) {
+                _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+            }
+
+            // 3. Gatillo Físico R2 -> Gatillo Virtual Izquierdo (LT) al 100%
+            // Detectamos si se pulsa el botón del gatillo o si se presiona un poco
+            if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
+                _controller_host_state.lt = 255; 
+            }
+
+            // 4. Gatillo Físico L2 -> Botón Virtual R1 (Digital)
+            if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
+                _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+            }
+
+            // --- FIN REMAPEO PERSONALIZADO ---
+
+            // Mapeo del resto de botones estándar
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
             if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-            if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R2;
-            if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+            
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
             if (controller_report.buttonEast) _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-            if (controller_report.buttonR2) _controller_host_state.buttons |= GAMEPAD_MASK_L2;
-            if (controller_report.buttonL2) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
             _controller_host_state.dpad = 0;
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
