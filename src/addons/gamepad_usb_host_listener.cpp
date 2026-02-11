@@ -37,12 +37,17 @@ void GamepadUSBHostListener::setup() {
 
 void GamepadUSBHostListener::process() {
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
+    
+    // Asignación de capacidades analógicas
     gamepad->hasAnalogTriggers   = _controller_host_analog;
     gamepad->hasLeftAnalogStick  = _controller_host_analog;
     gamepad->hasRightAnalogStick = _controller_host_analog;
     
-    gamepad->state.dpad     |= _controller_host_state.dpad;
-    gamepad->state.buttons  |= _controller_host_state.buttons;
+    // --- CORRECCIÓN CRÍTICA 1: USAR ASIGNACIÓN (=) EN LUGAR DE OR (|=) ---
+    // Esto evita que los botones se queden "pegados" (latching)
+    gamepad->state.dpad     = _controller_host_state.dpad;
+    gamepad->state.buttons  = _controller_host_state.buttons;
+    
     gamepad->state.lx       = _controller_host_state.lx;
     gamepad->state.ly       = _controller_host_state.ly;
     gamepad->state.rx       = _controller_host_state.rx;
@@ -68,7 +73,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_enabled = true;
     _controller_dev_addr = dev_addr;
     _controller_instance = instance;
-    _controller_type = 0; // Usamos 0 para evitar errores de compilación
+    _controller_type = 0; // 0 para evitar errores de compilación
     controller_vid = vid;
     controller_pid = pid;
 
@@ -94,7 +99,8 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             setup_ds4();
             break;
         case 0x0CE6: // DualSense
-            isDS4Identified = true; 
+            // Identificamos que es un mando soportado, pero NO es un DS4 legacy
+            // isDS4Identified = false; // Lo dejamos false o true según convenga, pero no llamaremos update_ds4
             break;
         default:
             break;
@@ -155,8 +161,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        // ARREGLO FLECHAS: Ejecutamos SIEMPRE, sin verificar diferencias (diff_report eliminado)
-        // Esto asegura que si sueltas el botón, se limpie el estado inmediatamente.
+        // Procesamos siempre (sin diff_report) para asegurar que se limpien los estados al soltar botones
         if (true) {
             
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
@@ -271,7 +276,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        // ARREGLO FLECHAS: Ejecutamos SIEMPRE, sin verificar diferencias (diff_report eliminado)
+        // Procesamos siempre (sin diff_report)
         if (true) {
             
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
@@ -375,13 +380,16 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 }
 
 // --------------------------------------------------------------------------------
-//                                  UPDATE LEDS (SIN VIBRACIÓN)
+//                                  UPDATE LEDS (SOLO DS4)
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
+    // CORRECCIÓN CRÍTICA 2: NO LLAMAR A update_ds4() SI ES DUALSENSE (0x0CE6)
+    // El DualSense no acepta el reporte de LEDs de DS4 y puede causar conflictos.
+    // Solo actualizamos si es un mando de PS4 reconocido.
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
-        controller_pid == 0xB67B || controller_pid == 0x00EE || controller_pid == 0x0CE6) {
+        controller_pid == 0xB67B || controller_pid == 0x00EE) {
         
         if (isDS4Identified) update_ds4();
     }
@@ -394,7 +402,7 @@ void GamepadUSBHostListener::update_ds4() {
     memset(&controller_output, 0, sizeof(controller_output));
     controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
 
-    // --- CAMBIO DE COLOR (Opcional, puede no funcionar en DualSense sin CRC32) ---
+    // LEDs para mandos de PS4 (El DualSense no entra aquí)
     controller_output.enableUpdateLED = 1; 
 
     if (current_profile == PROFILE_WARZONE) {
@@ -409,10 +417,7 @@ void GamepadUSBHostListener::update_ds4() {
         controller_output.ledBlue = 0;
     }
 
-    // --- VIBRACIÓN ELIMINADA POR COMPLETO ---
-    controller_output.enableUpdateRumble = 0;
-    controller_output.rumbleLeft = 0;
-    controller_output.rumbleRight = 0;
+    // SIN VIBRACIÓN
 
     void * report = &controller_output;
     uint16_t report_size = sizeof(controller_output)-1;
