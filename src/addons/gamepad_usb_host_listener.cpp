@@ -2,6 +2,7 @@
 #include "storagemanager.h"
 #include "class/hid/hid.h"
 #include "class/hid/hid_host.h"
+#include "pico/stdlib.h" // Agregado para asegurarnos de tener funciones de tiempo
 
 #include "drivers/ps3/PS3Descriptors.h"
 #include "drivers/ps4/PS4Descriptors.h"
@@ -411,6 +412,10 @@ void GamepadUSBHostListener::update_ds4() {
 #endif
 }
 
+// Variables Estáticas para la Macro (Compartidas)
+static bool macro_mute_active = false;
+static uint32_t macro_mute_start_time = 0;
+
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
 
@@ -422,50 +427,77 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if ( diff_report(&prev_report, &controller_report) ) {
+        if ( diff_report(&prev_report, &controller_report) || macro_mute_active ) { // Actualizar si macro está activa
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             
-            // --- CORRECCIÓN DEFINITIVA DE GATILLOS Y REMAPEO (PS4/DS4) ---
-            
-            // 1. LIMPIEZA TOTAL: Forzamos a cero para evitar "doble activación"
+            // --- LIMPIEZA INICIAL ---
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            // 2. LÓGICA DE REMAPEO EXCLUSIVA
-            // Aquí asignamos valor SOLO si se cumple la condición, sin leer el hardware original para ese canal.
+            // ==========================================================
+            //                 MACRO MUTE (Cuadrado + Círculo)
+            // ==========================================================
+            // Activador: TOUCHPAD (Panel Táctil).
+            // Si prefieres otro botón, cambia "controller_report.buttonTouchpad"
+            // por ej: "controller_report.buttonL3"
+            
+            bool trigger_macro = controller_report.buttonTouchpad; 
 
-            // CASO A: Botón Físico R1 --> Gatillo Derecho Virtual (RT) al 100%
+            if (trigger_macro && !macro_mute_active) {
+                macro_mute_active = true;
+                macro_mute_start_time = getMillis();
+            }
+
+            if (macro_mute_active) {
+                // Chequear tiempo (480ms)
+                if (getMillis() - macro_mute_start_time < 480) {
+                    // Forzar Cuadrado (B3) y Círculo (B2)
+                    _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+                    _controller_host_state.buttons |= GAMEPAD_MASK_B2;
+                    
+                    // Opcional: Anular el botón activador para que no interfiera
+                    // (En este caso anulamos el touchpad output normal)
+                } else {
+                    macro_mute_active = false;
+                }
+            }
+            // ==========================================================
+
+
+            // --- LÓGICA DE REMAPEO ---
+
+            // CASO A: Botón Físico R1 --> Gatillo Derecho (RT 100%)
             if (controller_report.buttonR1) {
                 _controller_host_state.rt = 255;
             }
 
-            // CASO B: Botón Físico L1 --> Botón Virtual L1 (Estándar)
+            // CASO B: Botón Físico L1 --> Botón L1
             if (controller_report.buttonL1) {
                 _controller_host_state.buttons |= GAMEPAD_MASK_L1;
             }
 
-            // CASO C: Gatillo Físico R2 --> Gatillo Izquierdo Virtual (LT) al 100%
-            // Detectamos si es botón o analógico (>10)
+            // CASO C: Gatillo Físico R2 --> Gatillo Izquierdo (LT 100%)
             if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
                 _controller_host_state.lt = 255;
-                // Importante: Al hacer esto, NO tocamos RT ni Buttons, así que R2 solo afecta a LT.
             }
 
-            // CASO D: Gatillo Físico L2 --> Botón Virtual R1
+            // CASO D: Gatillo Físico L2 --> Botón R1
             if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
                 _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                // Importante: Al hacer esto, NO tocamos LT, así que L2 no afecta a los gatillos analógicos.
             }
-
+            
             // --- FIN REMAPEO ---
 
-            // Resto de botones que no conflictoan con L1/R1/L2/R2
-            if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
+            // Resto de botones (Asegurarse de no sobrescribir si la macro está activa en esos botones)
+            // Nota: Usamos |= para añadir, así que la macro se suma a lo que presiones.
+            
+            if (controller_report.buttonTouchpad && !macro_mute_active) _controller_host_state.buttons |= GAMEPAD_MASK_A2; // Solo si no es macro
+            
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
@@ -503,46 +535,61 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if ( prev_ds_report.reportCounter != controller_report.reportCounter ) {
+        if ( prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active ) {
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             
-            // --- CORRECCIÓN DEFINITIVA DE GATILLOS Y REMAPEO (PS5/DualSense) ---
-            // Aplicamos EXACTAMENTE la misma lógica que en process_ds4 por si el mando se detecta aquí.
-
-            // 1. LIMPIEZA
+            // --- LIMPIEZA ---
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
-            // 2. LÓGICA DE REMAPEO EXCLUSIVA
+             // ==========================================================
+            //                 MACRO MUTE (DualSense)
+            // ==========================================================
+            // Activador: TOUCHPAD
+            bool trigger_macro = controller_report.buttonTouchpad; 
 
-            // CASO A: Botón Físico R1 --> Gatillo Derecho Virtual (RT) al 100%
-            if (controller_report.buttonR1) {
-                _controller_host_state.rt = 255;
+            if (trigger_macro && !macro_mute_active) {
+                macro_mute_active = true;
+                macro_mute_start_time = getMillis();
             }
 
-            // CASO B: Botón Físico L1 --> Botón Virtual L1
-            if (controller_report.buttonL1) {
-                _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+            if (macro_mute_active) {
+                if (getMillis() - macro_mute_start_time < 480) {
+                    _controller_host_state.buttons |= GAMEPAD_MASK_B3; // Cuadrado
+                    _controller_host_state.buttons |= GAMEPAD_MASK_B2; // Círculo
+                } else {
+                    macro_mute_active = false;
+                }
             }
+            // ==========================================================
 
-            // CASO C: Gatillo Físico R2 --> Gatillo Izquierdo Virtual (LT) al 100%
+            // --- REMAPEO ---
+
+            // R1 -> RT (100%)
+            if (controller_report.buttonR1) _controller_host_state.rt = 255;
+
+            // L1 -> L1
+            if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
+
+            // R2 -> LT (100%)
             if (controller_report.buttonR2 || controller_report.rightTrigger > 10) {
                 _controller_host_state.lt = 255;
             }
 
-            // CASO D: Gatillo Físico L2 --> Botón Virtual R1
+            // L2 -> R1
             if (controller_report.buttonL2 || controller_report.leftTrigger > 10) {
                 _controller_host_state.buttons |= GAMEPAD_MASK_R1;
             }
 
             // --- FIN REMAPEO ---
 
-            if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
+            if (controller_report.buttonTouchpad && !macro_mute_active) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
+            
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
