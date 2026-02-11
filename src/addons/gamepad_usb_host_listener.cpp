@@ -433,7 +433,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             // 1. LIMPIEZA TOTAL: Forzamos a cero para evitar "doble activación"
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
-            _controller_host_buttons = 0; // Usar una variable temporal o limpiar directo
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
