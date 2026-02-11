@@ -8,7 +8,7 @@
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
-#define ANTI_RECOIL_STRENGTH 1200
+#define ANTI_RECOIL_STRENGTH 2500
 
 #define LED_EAFC_R     0xFF
 #define LED_EAFC_G     0xFF
