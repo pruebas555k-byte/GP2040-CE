@@ -444,7 +444,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonEast) _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-            if (controller_report.buttonR2) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+            if (controller_report.buttonR2) _controller_host_state.buttons |= GAMEPAD_MASK_L2;
             if (controller_report.buttonL2) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
             _controller_host_state.dpad = 0;
@@ -489,14 +489,14 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
             if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-            if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+            if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R2;
             if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
             if (controller_report.buttonEast) _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
             if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-            if (controller_report.buttonR2) _controller_host_state.buttons |= GAMEPAD_MASK_R2;
-            if (controller_report.buttonL2) _controller_host_state.buttons |= GAMEPAD_MASK_L2;
+            if (controller_report.buttonR2) _controller_host_state.buttons |= GAMEPAD_MASK_L2;
+            if (controller_report.buttonL2) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
             _controller_host_state.dpad = 0;
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
