@@ -5,55 +5,60 @@
 #include "pico/stdlib.h"
 #include <cstring>
 
+// Solo Drivers de PlayStation
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
+// --- CONFIGURACIÓN ---
 #define ANTI_RECOIL_STRENGTH 1200 
 
+// --- ESTRUCTURA DEL OUT REPORT PARA PS5 (DualSense) ---
 #pragma pack(push, 1)
 struct DS5OutReport {
-    uint8_t report_id;
-    uint8_t valid_flag0;
-    uint8_t valid_flag1;
-    uint8_t motor_right;
-    uint8_t motor_left;
-    uint8_t headphone_audio_volume;
-    uint8_t speaker_audio_volume;
-    uint8_t internal_microphone_volume;
-    uint8_t audio_flags;
-    uint8_t mute_button_led;
-    uint8_t power_save_control;
-    uint8_t right_trigger_motor_mode;
-    uint8_t right_trigger_param[10];
-    uint8_t left_trigger_motor_mode;
-    uint8_t left_trigger_param[10];
-    uint32_t host_timestamp;
-    uint8_t reduce_motor_power;
-    uint8_t audio_flags2;
-    uint8_t valid_flag2;
-    uint8_t haptics_flags;
-    uint8_t reserved3;
-    uint8_t lightbar_setup;
-    uint8_t led_brightness;
-    uint8_t player_leds;
-    uint8_t lightbar_red;
-    uint8_t lightbar_green;
-    uint8_t lightbar_blue;
+    uint8_t report_id;          // Byte 0
+    uint8_t valid_flag0;        // Byte 1
+    uint8_t valid_flag1;        // Byte 2
+    uint8_t motor_right;        // Byte 3
+    uint8_t motor_left;         // Byte 4
+    uint8_t headphone_audio_volume;      // Byte 5
+    uint8_t speaker_audio_volume;        // Byte 6
+    uint8_t internal_microphone_volume;  // Byte 7
+    uint8_t audio_flags;                 // Byte 8
+    uint8_t mute_button_led;             // Byte 9
+    uint8_t power_save_control;          // Byte 10
+    uint8_t right_trigger_motor_mode;    // Byte 11
+    uint8_t right_trigger_param[10];     // Byte 12-21
+    uint8_t left_trigger_motor_mode;     // Byte 22
+    uint8_t left_trigger_param[10];      // Byte 23-32
+    uint32_t host_timestamp;             // Byte 33-36
+    uint8_t reduce_motor_power;          // Byte 37
+    uint8_t audio_flags2;                // Byte 38
+    uint8_t valid_flag2;                 // Byte 39
+    uint8_t haptics_flags;               // Byte 40
+    uint8_t reserved3;                   // Byte 41
+    uint8_t lightbar_setup;              // Byte 42
+    uint8_t led_brightness;              // Byte 43
+    uint8_t player_leds;                 // Byte 44
+    uint8_t lightbar_red;                // Byte 45
+    uint8_t lightbar_green;              // Byte 46
+    uint8_t lightbar_blue;               // Byte 47
 };
 #pragma pack(pop)
 
-#define DS_FLAG1_LIGHTBAR_ENABLE       (1 << 2)
+// Flags DualSense
+#define DS_FLAG1_LIGHTBAR_ENABLE       (1 << 2) 
 #define DS_FLAG1_PLAYER_LED_ENABLE     (1 << 4)
 #define DS_FLAG2_LIGHTBAR_SETUP_ENABLE (1 << 1)
 #define DS_LIGHTBAR_SETUP_LIGHT_ON     (1 << 0)
 
+// Colores por perfil
 #define LED_EAFC_R     0x00
 #define LED_EAFC_G     0x00
-#define LED_EAFC_B     0xFF
+#define LED_EAFC_B     0xFF    // Azul para EA FC
 
 #define LED_WARZONE_R  0xFF
 #define LED_WARZONE_G  0x00
-#define LED_WARZONE_B  0x00
+#define LED_WARZONE_B  0x00    // Rojo para Warzone
 
 enum Profile {
     PROFILE_EAFC,
@@ -61,23 +66,39 @@ enum Profile {
 };
 
 static Profile current_profile = PROFILE_EAFC; 
-static Profile last_led_profile = PROFILE_EAFC;
 static uint32_t profile_switch_timer = 0;
 static bool profile_switch_held = false;
+
+// Variables Macro Mute
 static bool macro_mute_active = false;
 static uint32_t macro_mute_start_time = 0;
+
+// Variables Macro Turbo
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
+
+// Variable para saber si necesitamos actualizar el LED del PS5
 static bool ds5_led_needs_update = true;
+
+// Variable para inicialización diferida (EVITA EL BLOQUEO EN MOUNT)
+static bool ds5_pending_init = false;
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
+    ds5_pending_init = false;
 #if GAMEPAD_HOST_DEBUG
     stdio_init_all();
 #endif
 }
 
 void GamepadUSBHostListener::process() {
+    // --- FIX: INICIALIZACIÓN DIFERIDA DEL PS5 ---
+    // Se ejecuta una sola vez al conectar el mando
+    if (_controller_host_enabled && ds5_pending_init) {
+        init_ds5_led(_controller_dev_addr, _controller_instance);
+        ds5_pending_init = false; 
+    }
+
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
     
     gamepad->hasAnalogTriggers   = _controller_host_analog;
@@ -99,6 +120,10 @@ void GamepadUSBHostListener::process() {
         _next_update = getMillis() + GAMEPAD_HOST_POLL_INTERVAL_MS;
     }
 }
+
+// --------------------------------------------------------------------------------
+//                                  INICIALIZACIÓN
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
     uint16_t vid = 0;
@@ -123,20 +148,21 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     switch(controller_pid)
     {
         case PS4_PRODUCT_ID:       
-        case 0x00EE:               
+        case 0x00EE:                
         case PS4_WHEEL_PRODUCT_ID: 
-        case 0xB67B:               
+        case 0xB67B:                
             init_ds4(desc_report, desc_len);
             break;
         case DS4_ORG_PRODUCT_ID:   
-        case DS4_PRODUCT_ID:       
+        case DS4_PRODUCT_ID:        
             isDS4Identified = true;
             setup_ds4();
             break;
-        case 0x0CE6:
+        case 0x0CE6: // DualSense PS5
             isDS4Identified = true;
             ds5_led_needs_update = true;
-            init_ds5_led(dev_addr, instance);
+            // Solo marcamos pendiente, NO inicializamos aquí para evitar bloqueo
+            ds5_pending_init = true;
             break;
         default:
             break;
@@ -155,7 +181,12 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     isDS4Identified = false;
     hasDS4DefReport = false;
     ds5_led_needs_update = true;
+    ds5_pending_init = false;
 }
+
+// --------------------------------------------------------------------------------
+//        INICIALIZACIÓN LED PS5 (DualSense) - LLAMADO DESDE PROCESS()
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     DS5OutReport out_report;
@@ -165,28 +196,34 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     out_report.valid_flag1 = DS_FLAG1_LIGHTBAR_ENABLE | DS_FLAG1_PLAYER_LED_ENABLE;
     out_report.valid_flag2 = DS_FLAG2_LIGHTBAR_SETUP_ENABLE;
     out_report.lightbar_setup = DS_LIGHTBAR_SETUP_LIGHT_ON;
-    out_report.led_brightness = 0x02;
-    out_report.player_leds = 0x04;
+    out_report.led_brightness = 0x02; 
+    out_report.player_leds = 0x04;    
 
-    if (current_profile == PROFILE_WARZONE) {
-        out_report.lightbar_red   = LED_WARZONE_R;
-        out_report.lightbar_green = LED_WARZONE_G;
-        out_report.lightbar_blue  = LED_WARZONE_B;
-    } else {
+    if (current_profile == PROFILE_EAFC) {
         out_report.lightbar_red   = LED_EAFC_R;
         out_report.lightbar_green = LED_EAFC_G;
         out_report.lightbar_blue  = LED_EAFC_B;
+    } else {
+        out_report.lightbar_red   = LED_WARZONE_R;
+        out_report.lightbar_green = LED_WARZONE_G;
+        out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
+    // Bucle seguro en process() - Solo para el primer encendido
     while (!tuh_hid_send_report(dev_addr, instance, 0, &out_report, sizeof(DS5OutReport)))
     {
         tuh_task();
     }
 
-    last_led_profile = current_profile;
+    // Iniciar recepción para que el mando mande datos
     tuh_hid_receive_report(dev_addr, instance);
+
     ds5_led_needs_update = false;
 }
+
+// --------------------------------------------------------------------------------
+//                                  REPORTES
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     if ( _controller_host_enabled == false ) return;
@@ -199,20 +236,24 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
     switch(controller_pid)
     {
         case DS4_ORG_PRODUCT_ID:   
-        case DS4_PRODUCT_ID:       
-        case PS4_PRODUCT_ID:       
+        case DS4_PRODUCT_ID:        
+        case PS4_PRODUCT_ID:        
         case PS4_WHEEL_PRODUCT_ID: 
-        case 0xB67B:               
-        case 0x00EE:               
+        case 0xB67B:                
+        case 0x00EE:                
             if (isDS4Identified) process_ds4(report, len);
             break;
-        case 0x0CE6:
+        case 0x0CE6: // DualSense
             process_ds(report, len);
             break;
         default:
             break;
     }
 }
+
+// --------------------------------------------------------------------------------
+//                                  LÓGICA DEL MANDO PS4
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
@@ -234,6 +275,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
+            // --- CAMBIO DE PERFIL ---
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -241,13 +283,14 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else if (getMillis() - profile_switch_timer > 2000) {
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
+                    
                     profile_switch_timer = getMillis() + 5000;
-                    ds5_led_needs_update = true;
                 }
             } else {
                 profile_switch_held = false;
             }
 
+            // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
@@ -270,6 +313,8 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
+
+            // --- PERFIL 2: WARZONE ---
             else if (current_profile == PROFILE_WARZONE) {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
@@ -299,6 +344,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
+            // --- COMUNES ---
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
@@ -322,11 +368,16 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     prev_report = controller_report;
 }
 
+// --------------------------------------------------------------------------------
+//                                  LÓGICA DEL MANDO PS5 (DualSense)
+// --------------------------------------------------------------------------------
+
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
     uint8_t const report_id = report[0];
 
+    // Verificar Report ID 1 (Entrada estándar USB)
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
@@ -342,20 +393,27 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
+            // --- LÓGICA DE CAMBIO DE PERFIL ---
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
                     profile_switch_timer = getMillis();
                 } else if (getMillis() - profile_switch_timer > 2000) {
+                    // Cambiar perfil
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
-                    profile_switch_timer = getMillis() + 5000;
+                    
+                    // Activamos la bandera para actualizar el LED
                     ds5_led_needs_update = true;
+
+                    // Resetear timer
+                    profile_switch_timer = getMillis() + 5000;
                 }
             } else {
                 profile_switch_held = false;
             }
 
+            // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
@@ -378,6 +436,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
+
+            // --- PERFIL 2: WARZONE ---
             else if (current_profile == PROFILE_WARZONE) {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
@@ -407,6 +467,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
+            // --- COMUNES ---
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
@@ -430,11 +491,11 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     prev_ds_report = controller_report;
 }
 
-void GamepadUSBHostListener::update_ds5() {
-    if (last_led_profile != current_profile) {
-        ds5_led_needs_update = true;
-    }
+// --------------------------------------------------------------------------------
+//                           UPDATE LEDs PS5 (DualSense)
+// --------------------------------------------------------------------------------
 
+void GamepadUSBHostListener::update_ds5() {
     if (!ds5_led_needs_update) return;
 
     DS5OutReport out_report;
@@ -447,24 +508,28 @@ void GamepadUSBHostListener::update_ds5() {
     out_report.led_brightness = 0x02;
     out_report.player_leds = 0x04;
 
-    if (current_profile == PROFILE_WARZONE) {
-        out_report.lightbar_red   = LED_WARZONE_R;
-        out_report.lightbar_green = LED_WARZONE_G;
-        out_report.lightbar_blue  = LED_WARZONE_B;
-    } else {
+    if (current_profile == PROFILE_EAFC) {
         out_report.lightbar_red   = LED_EAFC_R;
         out_report.lightbar_green = LED_EAFC_G;
         out_report.lightbar_blue  = LED_EAFC_B;
+    } else {
+        out_report.lightbar_red   = LED_WARZONE_R;
+        out_report.lightbar_green = LED_WARZONE_G;
+        out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
-    while (!tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0, &out_report, sizeof(DS5OutReport)))
+    // --- FIX: NO USAR WHILE ---
+    // Intentar enviar una vez. Si falla (ocupado), mantenemos la bandera true
+    // para reintentarlo en el siguiente ciclo.
+    if (tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0, &out_report, sizeof(DS5OutReport)))
     {
-        tuh_task();
+        ds5_led_needs_update = false; // Éxito, bajamos bandera
     }
-
-    last_led_profile = current_profile;
-    ds5_led_needs_update = false;
 }
+
+// --------------------------------------------------------------------------------
+//                                  UPDATE CONTROLLER
+// --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::update_ctrlr() {
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
@@ -483,6 +548,7 @@ void GamepadUSBHostListener::update_ds4() {
 #endif
 }
 
+// Helpers
 bool GamepadUSBHostListener::host_get_report(uint8_t report_id, void* report, uint16_t len) {
     awaiting_cb = true;
     return tuh_hid_get_report(_controller_dev_addr, _controller_instance, report_id, HID_REPORT_TYPE_FEATURE, report, len);
@@ -532,6 +598,7 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
     }
 }
 
+// Funciones vacías
 void GamepadUSBHostListener::update_switch_pro() {}
 void GamepadUSBHostListener::setup_switch_pro(uint8_t const *report, uint16_t len) {}
 void GamepadUSBHostListener::process_switch_pro(uint8_t const *report, uint16_t len) {}
