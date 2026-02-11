@@ -9,11 +9,11 @@
 #include "drivers/ps4/PS4Driver.h"
 
 // --- CONFIGURACIÓN ---
-#define ANTI_RECOIL_STRENGTH 1200 // Fuerza de bajada de mira en Warzone
+#define ANTI_RECOIL_STRENGTH 1200 
 
 enum Profile {
-    PROFILE_EAFC,   // LED ROJO: Gatillos invertidos + Mute
-    PROFILE_WARZONE // LED AZUL: Anti-Recoil + Turbo
+    PROFILE_EAFC,   
+    PROFILE_WARZONE 
 };
 
 static Profile current_profile = PROFILE_EAFC; 
@@ -68,7 +68,10 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_enabled = true;
     _controller_dev_addr = dev_addr;
     _controller_instance = instance;
-    _controller_type = xinput_type_t::UNKNOWN;
+    
+    // CORRECCIÓN: Usamos 0 en lugar de xinput_type_t para evitar el error de compilación
+    _controller_type = 0; 
+    
     controller_vid = vid;
     controller_pid = pid;
 
@@ -94,7 +97,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             setup_ds4();
             break;
         case 0x0CE6: // DualSense
-            // Marcamos como identificado para que update_ctrlr sepa que puede enviarle LEDs
             isDS4Identified = true; 
             break;
         default:
@@ -184,7 +186,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 profile_switch_held = false;
             }
 
-            // --- PERFIL 1: EA FC 26 (LED ROJO) ---
+            // --- PERFIL 1: EA FC 26 ---
             if (current_profile == PROFILE_EAFC) {
                 // Macro Mute (Activador: Botón PS)
                 if (controller_report.buttonHome && !macro_mute_active) {
@@ -210,7 +212,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
 
-            // --- PERFIL 2: WARZONE (LED AZUL) ---
+            // --- PERFIL 2: WARZONE ---
             else if (current_profile == PROFILE_WARZONE) {
                 // Anti-Recoil (L2 + R2)
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
@@ -402,30 +404,25 @@ void GamepadUSBHostListener::update_ds4() {
     memset(&controller_output, 0, sizeof(controller_output));
     controller_output.reportID = PS4AuthReport::PS4_SET_FEATURE_STATE;
 
-    // --- CONFIGURACIÓN DE COLOR FORZADA ---
-    
-    // Forzar actualización de LEDs ignorando al sistema
-    controller_output.enableUpdateLED = 1; 
-
-    if (current_profile == PROFILE_WARZONE) {
-        // LED AZUL (Warzone)
-        controller_output.ledRed = 0;
-        controller_output.ledGreen = 0;
-        controller_output.ledBlue = 255;
-    } else {
-        // LED ROJO (EA FC)
-        controller_output.ledRed = 255;
-        controller_output.ledGreen = 0;
-        controller_output.ledBlue = 0;
-    }
+    // SIN LEDS - Se eliminó la configuración de color para evitar errores
 
     if (ds4Config.features.enableRumble) {
-        // Vibración normal del juego
-        gamepad->auxState.haptics.leftActuator.enabled = 1;
-        gamepad->auxState.haptics.rightActuator.enabled = 1;
-        controller_output.enableUpdateRumble = 1;
-        controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
-        controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
+        // Vibración normal del juego + Feedback de cambio de perfil
+        if (getMillis() < profile_switch_timer) { 
+             // Feedback de vibración:
+             // EA FC = Vibración derecha suave
+             // WARZONE = Vibración izquierda suave
+             controller_output.enableUpdateRumble = 1;
+             controller_output.rumbleLeft = (current_profile == PROFILE_WARZONE) ? 80 : 0; 
+             controller_output.rumbleRight = (current_profile == PROFILE_EAFC) ? 80 : 0;
+        } else {
+            // Juego normal
+            gamepad->auxState.haptics.leftActuator.enabled = 1;
+            gamepad->auxState.haptics.rightActuator.enabled = 1;
+            controller_output.enableUpdateRumble = 1;
+            controller_output.rumbleLeft = gamepad->auxState.haptics.leftActuator.intensity;
+            controller_output.rumbleRight = gamepad->auxState.haptics.rightActuator.intensity;
+        }
     }
 
     void * report = &controller_output;
