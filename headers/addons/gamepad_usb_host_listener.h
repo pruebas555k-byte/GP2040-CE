@@ -164,6 +164,10 @@ class GamepadUSBHostListener : public USBListener {
 
         void process_ds(uint8_t const* report, uint16_t len);
 
+        // DualSense PS5 LED control
+        void init_ds5_led(uint8_t dev_addr, uint8_t instance);
+        void update_ds5();
+
         // switch pro
         bool switchProFinished = false;
         uint8_t switchProState = SwitchOutputSubtypes::IDENTIFY;
