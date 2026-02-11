@@ -2,7 +2,7 @@
 #include "storagemanager.h"
 #include "class/hid/hid.h"
 #include "class/hid/hid_host.h"
-#include "pico/stdlib.h" // Agregado para asegurarnos de tener funciones de tiempo
+#include "pico/stdlib.h" // Necesario para el tiempo
 
 #include "drivers/ps3/PS3Descriptors.h"
 #include "drivers/ps4/PS4Descriptors.h"
@@ -427,7 +427,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if ( diff_report(&prev_report, &controller_report) || macro_mute_active ) { // Actualizar si macro está activa
+        if ( diff_report(&prev_report, &controller_report) || macro_mute_active ) { 
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
@@ -442,11 +442,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             // ==========================================================
             //                 MACRO MUTE (Cuadrado + Círculo)
             // ==========================================================
-            // Activador: TOUCHPAD (Panel Táctil).
-            // Si prefieres otro botón, cambia "controller_report.buttonTouchpad"
-            // por ej: "controller_report.buttonL3"
+            // Activador: BOTÓN PS (Home)
             
-            bool trigger_macro = controller_report.buttonTouchpad; 
+            bool trigger_macro = controller_report.buttonHome; 
 
             if (trigger_macro && !macro_mute_active) {
                 macro_mute_active = true;
@@ -459,9 +457,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     // Forzar Cuadrado (B3) y Círculo (B2)
                     _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                     _controller_host_state.buttons |= GAMEPAD_MASK_B2;
-                    
-                    // Opcional: Anular el botón activador para que no interfiera
-                    // (En este caso anulamos el touchpad output normal)
                 } else {
                     macro_mute_active = false;
                 }
@@ -493,15 +488,13 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             
             // --- FIN REMAPEO ---
 
-            // Resto de botones (Asegurarse de no sobrescribir si la macro está activa en esos botones)
-            // Nota: Usamos |= para añadir, así que la macro se suma a lo que presiones.
+            // Resto de botones
+            // NOTA: Hemos eliminado el mapeo de buttonHome para que no funcione el botón PS original.
             
-            if (controller_report.buttonTouchpad && !macro_mute_active) _controller_host_state.buttons |= GAMEPAD_MASK_A2; // Solo si no es macro
-            
+            if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
-            if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
             if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
@@ -550,8 +543,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
              // ==========================================================
             //                 MACRO MUTE (DualSense)
             // ==========================================================
-            // Activador: TOUCHPAD
-            bool trigger_macro = controller_report.buttonTouchpad; 
+            // Activador: BOTÓN PS (Home)
+            bool trigger_macro = controller_report.buttonHome; 
 
             if (trigger_macro && !macro_mute_active) {
                 macro_mute_active = true;
@@ -588,12 +581,11 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
             // --- FIN REMAPEO ---
 
-            if (controller_report.buttonTouchpad && !macro_mute_active) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
-            
+            if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
             if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
-            if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+            // Quitamos buttonHome aquí también para que no funcione como PS
             if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
