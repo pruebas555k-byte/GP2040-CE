@@ -3,36 +3,40 @@
 #include "class/hid/hid.h"
 #include "class/hid/hid_host.h"
 #include "pico/stdlib.h"
+#include <cstring>
 
 // Solo Drivers de PlayStation
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
 // --- CONFIGURACIÓN ---
-#define ANTI_RECOIL_STRENGTH 1200 
+#define ANTI_RECOIL_STRENGTH 2500 
 
 // --- ESTRUCTURA DEL OUT REPORT PARA PS5 (DualSense) ---
-// Basado en el protocolo USB HID del DualSense
+// Tamaño exacto = 48 bytes (lo que espera el DualSense por USB)
+// Offsets verificados contra el código PS5Host que SÍ funciona
 #pragma pack(push, 1)
 struct DS5OutReport {
-    uint8_t report_id;          // 0x02 para USB
-    uint8_t control_flag[2];    // [0]=0x02, [1]=0x02 para habilitar motor+LED
-    uint8_t motor_right;        // Rumble derecho (alta frecuencia)
-    uint8_t motor_left;         // Rumble izquierdo (baja frecuencia)
-    uint8_t reserved1[4];       // Headphone, speaker volume, mic volume, audio flags
-    uint8_t mute_button_led;    // LED del botón mute
-    uint8_t reserved2[7];       // Power reduction, padding
-    uint8_t reserved3[5];       // Right trigger effect
-    uint8_t reserved4[5];       // Left trigger effect  
-    uint8_t reserved5[6];       // Padding
-    uint8_t led_control_flag;   // 0x01=mic mute LED, 0x02=lightbar control, 0x04=player LEDs
-    uint8_t reserved6[2];       // Padding
-    uint8_t pulse_option;       // LED fade animation
-    uint8_t led_brightness;     // Brillo: 0x00=max, 0x01=mid, 0x02=low
-    uint8_t player_number;      // Player LED (1-5)
-    uint8_t lightbar_red;       // Lightbar R (0-255)
-    uint8_t lightbar_green;     // Lightbar G (0-255)
-    uint8_t lightbar_blue;      // Lightbar B (0-255)
+    uint8_t report_id;          // Byte 0:  0x02 para USB
+    uint8_t control_flag[2];    // Byte 1-2: [0]=2, [1]=2
+    uint8_t motor_right;        // Byte 3
+    uint8_t motor_left;         // Byte 4
+    uint8_t reserved1[4];       // Byte 5-8: headphone, speaker, mic vol, audio flags
+    uint8_t mute_button_led;    // Byte 9
+    uint8_t reserved2[7];       // Byte 10-16
+    uint8_t reserved3[5];       // Byte 17-21: right trigger effect
+    uint8_t reserved4[5];       // Byte 22-26: left trigger effect
+    uint8_t reserved5[6];       // Byte 27-32
+    uint8_t reserved6[5];       // Byte 33-37
+    uint8_t led_control_flag;   // Byte 38
+    uint8_t reserved7[2];       // Byte 39-40
+    uint8_t pulse_option;       // Byte 41
+    uint8_t led_brightness;     // Byte 42
+    uint8_t player_number;      // Byte 43
+    uint8_t lightbar_red;       // Byte 44
+    uint8_t lightbar_green;     // Byte 45
+    uint8_t lightbar_blue;      // Byte 46
+    uint8_t padding;            // Byte 47  (total = 48 bytes)
 };
 #pragma pack(pop)
 
@@ -135,7 +139,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
         case 0x0CE6: // DualSense PS5
             isDS4Identified = true;
             ds5_led_needs_update = true;
-            // Encender LED inmediatamente al conectar
             init_ds5_led(dev_addr, instance);
             break;
         default:
@@ -158,23 +161,29 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 }
 
 // --------------------------------------------------------------------------------
-//                    INICIALIZACIÓN LED PS5 (DualSense)
+//        INICIALIZACIÓN LED PS5 (DualSense) - BASADO EN PS5Host QUE FUNCIONA
 // --------------------------------------------------------------------------------
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    // Primer envío: configurar lightbar + player LED + brillo
+    // =====================================================================
+    // CLAVE: El código PS5Host que funciona hace 2 cosas diferentes:
+    // 1. Usa un while loop con tuh_task() para GARANTIZAR que se envíe
+    // 2. Usa report_id = CONTROL (no RUMBLE) para el primer envío de LED
+    // =====================================================================
+
     DS5OutReport out_report;
-    memset(&out_report, 0, sizeof(DS5OutReport));
+    std::memset(&out_report, 0, sizeof(DS5OutReport));
 
-    out_report.report_id = 0x02;        // Report ID para USB
-    out_report.control_flag[0] = 0x02;  // Habilitar control de motor
-    out_report.control_flag[1] = 0x02;  // Habilitar control de LED
-    out_report.led_control_flag = 0x01 | 0x02 | 0x04; // Mic LED + Lightbar + Player LEDs
-    out_report.pulse_option = 0x01;     // Sin parpadeo
-    out_report.led_brightness = 0x02;   // Brillo máximo (0x00=max, pero 0x02 funciona mejor)
-    out_report.player_number = 0x04;    // Player 1 LED encendido (centro)
+    // --- PASO 1: Enviar configuración de LED (igual que PS5Host::initialize) ---
+    out_report.report_id = 0x02;        // PS5::OutReportID::CONTROL = 0x02 para USB
+    out_report.control_flag[0] = 2;     // Exacto como PS5Host
+    out_report.control_flag[1] = 2;     // Exacto como PS5Host
+    out_report.led_control_flag = 0x01 | 0x02;  // Exacto como PS5Host (mic LED + lightbar)
+    out_report.pulse_option = 1;        // Exacto como PS5Host
+    out_report.led_brightness = 0xFF;   // Exacto como PS5Host (0xFF, NO 0x00 ni 0x02)
+    out_report.player_number = 1;       // Player 1
 
-    // Color según perfil actual
+    // Color según perfil
     if (current_profile == PROFILE_EAFC) {
         out_report.lightbar_red   = LED_EAFC_R;
         out_report.lightbar_green = LED_EAFC_G;
@@ -185,7 +194,25 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
-    tuh_hid_send_report(dev_addr, instance, 0, &out_report, sizeof(DS5OutReport));
+    // CLAVE: while loop con tuh_task() - EXACTO como PS5Host que funciona
+    // Sin esto, el reporte puede perderse porque el USB no está listo
+    while (!tuh_hid_send_report(dev_addr, instance, 0, &out_report, sizeof(DS5OutReport)))
+    {
+        tuh_task();
+    }
+
+    // --- PASO 2: Reconfigurar para uso continuo (rumble + player LEDs) ---
+    // Igual que PS5Host: después del LED, resetea el out_report para rumble
+    std::memset(&out_report, 0, sizeof(DS5OutReport));
+    out_report.report_id = 0x02;
+    out_report.control_flag[0] = 2;
+    out_report.control_flag[1] = 2;
+    out_report.led_control_flag = 0x04;  // Solo player LEDs para uso continuo
+
+    // CLAVE: Iniciar recepción de reportes del mando
+    tuh_hid_receive_report(dev_addr, instance);
+
+    ds5_led_needs_update = false;
 }
 
 // --------------------------------------------------------------------------------
@@ -369,7 +396,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
                     else current_profile = PROFILE_EAFC;
                     profile_switch_timer = getMillis() + 5000;
-                    // Marcar que el LED necesita actualizarse al cambiar perfil
                     ds5_led_needs_update = true;
                 }
             } else {
@@ -468,29 +494,33 @@ void GamepadUSBHostListener::update_ds5() {
     if (!ds5_led_needs_update) return;
 
     DS5OutReport out_report;
-    memset(&out_report, 0, sizeof(DS5OutReport));
+    std::memset(&out_report, 0, sizeof(DS5OutReport));
 
     out_report.report_id = 0x02;
-    out_report.control_flag[0] = 0x02;
-    out_report.control_flag[1] = 0x02;
-    out_report.led_control_flag = 0x02 | 0x04; // Lightbar + Player LEDs
-    out_report.pulse_option = 0x01;
-    out_report.led_brightness = 0x00;   // Brillo máximo
-    out_report.player_number = 0x04;    // LED central del player indicator
+    out_report.control_flag[0] = 2;
+    out_report.control_flag[1] = 2;
+    out_report.led_control_flag = 0x01 | 0x02;
+    out_report.pulse_option = 1;
+    out_report.led_brightness = 0xFF;
+    out_report.player_number = 1;
 
     if (current_profile == PROFILE_EAFC) {
         out_report.lightbar_red   = LED_EAFC_R;
         out_report.lightbar_green = LED_EAFC_G;
-        out_report.lightbar_blue  = LED_EAFC_B;   // AZUL
+        out_report.lightbar_blue  = LED_EAFC_B;
     } else {
         out_report.lightbar_red   = LED_WARZONE_R;
         out_report.lightbar_green = LED_WARZONE_G;
-        out_report.lightbar_blue  = LED_WARZONE_B; // ROJO
+        out_report.lightbar_blue  = LED_WARZONE_B;
     }
 
-    if (tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0, &out_report, sizeof(DS5OutReport))) {
-        ds5_led_needs_update = false; // Solo marcar como hecho si el envío fue exitoso
+    // Usar while + tuh_task() como PS5Host
+    while (!tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0, &out_report, sizeof(DS5OutReport)))
+    {
+        tuh_task();
     }
+
+    ds5_led_needs_update = false;
 }
 
 // --------------------------------------------------------------------------------
@@ -504,7 +534,6 @@ void GamepadUSBHostListener::update_ctrlr() {
         
         if (isDS4Identified) update_ds4();
     }
-    // --- NUEVO: Actualizar LED del DualSense PS5 ---
     else if (controller_pid == 0x0CE6) {
         update_ds5();
     }
