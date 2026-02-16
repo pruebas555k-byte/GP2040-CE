@@ -10,13 +10,13 @@
 
 #define ANTI_RECOIL_STRENGTH 2500
 
-#define LED_EAFC_R     0xFF
-#define LED_EAFC_G     0xFF
-#define LED_EAFC_B     0xFF
+#define LED_EAFC_R      0xFF
+#define LED_EAFC_G      0xFF
+#define LED_EAFC_B      0xFF
 
-#define LED_WARZONE_R  0xFF
-#define LED_WARZONE_G  0x00
-#define LED_WARZONE_B  0x00
+#define LED_WARZONE_R   0xFF
+#define LED_WARZONE_G   0x00
+#define LED_WARZONE_B   0x00
 
 enum Profile {
     PROFILE_EAFC,
@@ -241,7 +241,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                if (controller_report.buttonR2 || controller_report.rightTrigger > 10) _controller_host_state.lt = 255;
+                
+                // === CAMBIO AQUI PARA PS4 ===
+                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
+                _controller_host_state.lt = controller_report.rightTrigger; 
+                // ============================
+
                 if (controller_report.buttonL2 || controller_report.leftTrigger > 10) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
@@ -350,7 +355,12 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                if (controller_report.buttonR2 || controller_report.rightTrigger > 10) _controller_host_state.lt = 255;
+                
+                // === CAMBIO AQUI PARA DUALSENSE ===
+                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
+                _controller_host_state.lt = controller_report.rightTrigger;
+                // ==================================
+
                 if (controller_report.buttonL2 || controller_report.leftTrigger > 10) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
