@@ -247,7 +247,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 _controller_host_state.lt = controller_report.rightTrigger; 
                 // ============================
 
-                if (controller_report.buttonL2 || controller_report.leftTrigger > 10) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                if (controller_report.buttonL2 || controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
