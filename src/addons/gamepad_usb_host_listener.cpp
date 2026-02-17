@@ -245,16 +245,25 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
-                // === LOGICA DE CRUCETA PERFECTA (CROSS SHAPE) PARA EAFC ===
+                // === LOGICA DE CRUCETA MEJORADA CON FACTOR DE SEGURIDAD ===
                 int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
                 int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
                 
-                // Si el movimiento en X es mayor que en Y, anula Y.
-                // Si el movimiento en Y es mayor que en X, anula X.
-                if (abs(diff_x) > abs(diff_y)) {
-                     _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                } else {
-                     _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                // FACTOR 3: El movimiento debe ser EL TRIPLE que el error para anularlo.
+                const int32_t SNAP_FACTOR = 3; 
+                const int32_t MOVE_THRESHOLD = 3000; // Deadzone de seguridad
+
+                // Solo aplicamos si hay movimiento real
+                if (abs(diff_x) > MOVE_THRESHOLD || abs(diff_y) > MOVE_THRESHOLD) {
+                    // Si X domina por goleada (3 veces mas que Y), aplanamos Y
+                    if (abs(diff_x) > abs(diff_y) * SNAP_FACTOR) {
+                         _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                    } 
+                    // Si Y domina por goleada (3 veces mas que X), aplanamos X
+                    else if (abs(diff_y) > abs(diff_x) * SNAP_FACTOR) {
+                         _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                    }
+                    // Si ninguno gana por tanto, dejamos que sea diagonal natural
                 }
                 // ==========================================================
 
@@ -371,16 +380,22 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
-                // === LOGICA DE CRUCETA PERFECTA (CROSS SHAPE) PARA EAFC ===
+                // === LOGICA DE CRUCETA MEJORADA CON FACTOR DE SEGURIDAD (DUALSENSE) ===
                 int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
                 int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
                 
-                if (abs(diff_x) > abs(diff_y)) {
-                     _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                } else {
-                     _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                const int32_t SNAP_FACTOR = 3; 
+                const int32_t MOVE_THRESHOLD = 3000; 
+
+                if (abs(diff_x) > MOVE_THRESHOLD || abs(diff_y) > MOVE_THRESHOLD) {
+                    if (abs(diff_x) > abs(diff_y) * SNAP_FACTOR) {
+                         _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                    } 
+                    else if (abs(diff_y) > abs(diff_x) * SNAP_FACTOR) {
+                         _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                    }
                 }
-                // ==========================================================
+                // ======================================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
