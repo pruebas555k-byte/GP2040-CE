@@ -4,7 +4,6 @@
 #include "class/hid/hid_host.h"
 #include "pico/stdlib.h"
 #include <cstring>
-#include <cstdlib> // Necesario para la funcion abs()
 
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
@@ -85,7 +84,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad = 0;
 
-    // SIEMPRE intentar LED sin importar PID
+    // SIEMPRE intentar LED sin importar PID (prueba)
     isDS4Identified = true;
     ds5_led_needs_update = true;
     init_ds5_led(dev_addr, instance);
@@ -136,7 +135,10 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[45] = LED_EAFC_G;
     buf[46] = LED_EAFC_B;
 
+    // Intentar AMBAS formas de enviar
+    // Forma 1: report_id en la llamada, datos sin ID
     if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
+        // Forma 2: report_id=0, datos con ID incluido
         uint8_t buf2[48];
         memset(buf2, 0, sizeof(buf2));
         buf2[0]  = 0x02;
@@ -182,6 +184,7 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             process_ds(report, len);
             break;
         default:
+            // Si no matchea ninguno, intentar como DualSense
             process_ds(report, len);
             break;
     }
@@ -239,33 +242,14 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 
-                // R2 fisico -> LT proporcional
+                // === CAMBIO AQUI PARA PS4 ===
+                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
                 _controller_host_state.lt = controller_report.rightTrigger; 
+                // ============================
 
-                // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
+                // Corrección L2: Solo usa el valor analógico > 50 (aprox 20% presión)
+                // Se borró la parte del botón digital para evitar sensibilidad extrema
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-
-                // === LOGICA DE CRUCETA MEJORADA CON FACTOR DE SEGURIDAD ===
-                int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
-                int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
-                
-                // FACTOR 3: El movimiento debe ser EL TRIPLE que el error para anularlo.
-                const int32_t SNAP_FACTOR = 3; 
-                const int32_t MOVE_THRESHOLD = 3000; // Deadzone de seguridad
-
-                // Solo aplicamos si hay movimiento real
-                if (abs(diff_x) > MOVE_THRESHOLD || abs(diff_y) > MOVE_THRESHOLD) {
-                    // Si X domina por goleada (3 veces mas que Y), aplanamos Y
-                    if (abs(diff_x) > abs(diff_y) * SNAP_FACTOR) {
-                         _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                    } 
-                    // Si Y domina por goleada (3 veces mas que X), aplanamos X
-                    else if (abs(diff_y) > abs(diff_x) * SNAP_FACTOR) {
-                         _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
-                    }
-                    // Si ninguno gana por tanto, dejamos que sea diagonal natural
-                }
-                // ==========================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
@@ -374,28 +358,13 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 
-                // R2 fisico -> LT proporcional
+                // === CAMBIO AQUI PARA DUALSENSE ===
+                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
                 _controller_host_state.lt = controller_report.rightTrigger;
+                // ==================================
 
-                // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
+                // Corrección L2: Solo usa el valor analógico > 50 (aprox 20% presión)
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-
-                // === LOGICA DE CRUCETA MEJORADA CON FACTOR DE SEGURIDAD (DUALSENSE) ===
-                int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
-                int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
-                
-                const int32_t SNAP_FACTOR = 3; 
-                const int32_t MOVE_THRESHOLD = 3000; 
-
-                if (abs(diff_x) > MOVE_THRESHOLD || abs(diff_y) > MOVE_THRESHOLD) {
-                    if (abs(diff_x) > abs(diff_y) * SNAP_FACTOR) {
-                         _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                    } 
-                    else if (abs(diff_y) > abs(diff_x) * SNAP_FACTOR) {
-                         _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
-                    }
-                }
-                // ======================================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
