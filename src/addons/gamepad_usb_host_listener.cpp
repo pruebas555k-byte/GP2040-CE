@@ -4,7 +4,7 @@
 #include "class/hid/hid_host.h"
 #include "pico/stdlib.h"
 #include <cstring>
-#include <cstdlib> // Necesario para abs()
+#include <cstdlib> // Necesario para la funcion abs()
 
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
@@ -85,7 +85,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad = 0;
 
-    // SIEMPRE intentar LED sin importar PID (prueba)
+    // SIEMPRE intentar LED sin importar PID
     isDS4Identified = true;
     ds5_led_needs_update = true;
     init_ds5_led(dev_addr, instance);
@@ -136,7 +136,6 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[45] = LED_EAFC_G;
     buf[46] = LED_EAFC_B;
 
-    // Intentar AMBAS formas de enviar
     if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
         uint8_t buf2[48];
         memset(buf2, 0, sizeof(buf2));
@@ -243,19 +242,21 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 // R2 fisico -> LT proporcional
                 _controller_host_state.lt = controller_report.rightTrigger; 
 
-                // L2 fisico -> R1 (Digital, activado al 20% / valor 50)
-                // CORREGIDO: Se quitó "buttonL2" para evitar que se dispare al tacto
+                // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
-                // === MODIFICACION LINEAL / CRUZ PARA ANALOGO DERECHO ===
-                int32_t rx_axis = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
-                int32_t ry_axis = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
-                // Umbral de 7000 (aprox 20% del eje) para que se pegue a la linea
-                const int32_t SNAP_THRESHOLD = 7000; 
+                // === LOGICA DE CRUCETA PERFECTA (CROSS SHAPE) PARA EAFC ===
+                int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
+                int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
                 
-                if (abs(rx_axis) < SNAP_THRESHOLD) _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
-                if (abs(ry_axis) < SNAP_THRESHOLD) _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                // ========================================================
+                // Si el movimiento en X es mayor que en Y, anula Y.
+                // Si el movimiento en Y es mayor que en X, anula X.
+                if (abs(diff_x) > abs(diff_y)) {
+                     _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                } else {
+                     _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                }
+                // ==========================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
@@ -367,18 +368,19 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 // R2 fisico -> LT proporcional
                 _controller_host_state.lt = controller_report.rightTrigger;
 
-                // L2 fisico -> R1 (Digital, activado al 20% / valor 50)
-                // CORREGIDO: Se quitó "buttonL2" para evitar que se dispare al tacto
+                // L2 fisico -> R1 (Corregido: umbral 50, sin trampa digital)
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
-                // === MODIFICACION LINEAL / CRUZ PARA ANALOGO DERECHO (DUALSENSE) ===
-                int32_t rx_axis = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
-                int32_t ry_axis = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
-                const int32_t SNAP_THRESHOLD = 7000; 
+                // === LOGICA DE CRUCETA PERFECTA (CROSS SHAPE) PARA EAFC ===
+                int32_t diff_x = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
+                int32_t diff_y = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
                 
-                if (abs(rx_axis) < SNAP_THRESHOLD) _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
-                if (abs(ry_axis) < SNAP_THRESHOLD) _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
-                // ===================================================================
+                if (abs(diff_x) > abs(diff_y)) {
+                     _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                } else {
+                     _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                }
+                // ==========================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
