@@ -4,11 +4,12 @@
 #include "class/hid/hid_host.h"
 #include "pico/stdlib.h"
 #include <cstring>
+#include <cstdlib> // Necesario para abs()
 
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
-#define ANTI_RECOIL_STRENGTH 2500
+#define ANTI_RECOIL_STRENGTH 3000
 
 #define LED_EAFC_R      0xFF
 #define LED_EAFC_G      0xFF
@@ -136,9 +137,7 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[46] = LED_EAFC_B;
 
     // Intentar AMBAS formas de enviar
-    // Forma 1: report_id en la llamada, datos sin ID
     if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
-        // Forma 2: report_id=0, datos con ID incluido
         uint8_t buf2[48];
         memset(buf2, 0, sizeof(buf2));
         buf2[0]  = 0x02;
@@ -184,7 +183,6 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             process_ds(report, len);
             break;
         default:
-            // Si no matchea ninguno, intentar como DualSense
             process_ds(report, len);
             break;
     }
@@ -242,14 +240,22 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 
-                // === CAMBIO AQUI PARA PS4 ===
-                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
+                // R2 fisico -> LT proporcional
                 _controller_host_state.lt = controller_report.rightTrigger; 
-                // ============================
 
-                // AQUI ESTA LA CORRECCION DE SENSIBILIDAD
-                // Quitamos "controller_report.buttonL2" para que solo dependa del valor 50
+                // L2 fisico -> R1 (Digital, activado al 20% / valor 50)
+                // CORREGIDO: Se quitó "buttonL2" para evitar que se dispare al tacto
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+
+                // === MODIFICACION LINEAL / CRUZ PARA ANALOGO DERECHO ===
+                int32_t rx_axis = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
+                int32_t ry_axis = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
+                // Umbral de 7000 (aprox 20% del eje) para que se pegue a la linea
+                const int32_t SNAP_THRESHOLD = 7000; 
+                
+                if (abs(rx_axis) < SNAP_THRESHOLD) _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                if (abs(ry_axis) < SNAP_THRESHOLD) _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                // ========================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
@@ -358,14 +364,21 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 
-                // === CAMBIO AQUI PARA DUALSENSE ===
-                // R2 fisico manda valor PROPORCIONAL (0-255) a LT
+                // R2 fisico -> LT proporcional
                 _controller_host_state.lt = controller_report.rightTrigger;
-                // ==================================
 
-                // AQUI ESTA LA CORRECCION DE SENSIBILIDAD
-                // Quitamos "controller_report.buttonL2" para que solo dependa del valor 50
+                // L2 fisico -> R1 (Digital, activado al 20% / valor 50)
+                // CORREGIDO: Se quitó "buttonL2" para evitar que se dispare al tacto
                 if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+
+                // === MODIFICACION LINEAL / CRUZ PARA ANALOGO DERECHO (DUALSENSE) ===
+                int32_t rx_axis = (int32_t)_controller_host_state.rx - GAMEPAD_JOYSTICK_MID;
+                int32_t ry_axis = (int32_t)_controller_host_state.ry - GAMEPAD_JOYSTICK_MID;
+                const int32_t SNAP_THRESHOLD = 7000; 
+                
+                if (abs(rx_axis) < SNAP_THRESHOLD) _controller_host_state.rx = GAMEPAD_JOYSTICK_MID;
+                if (abs(ry_axis) < SNAP_THRESHOLD) _controller_host_state.ry = GAMEPAD_JOYSTICK_MID;
+                // ===================================================================
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
