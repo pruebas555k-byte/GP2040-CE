@@ -247,9 +247,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 _controller_host_state.lt = controller_report.rightTrigger; 
                 // ============================
 
-                // Corrección L2: Solo usa el valor analógico > 50 (aprox 20% presión)
-                // Se borró la parte del botón digital para evitar sensibilidad extrema
-                if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                // Corrección L2: SUBIMOS EL UMBRAL A 160 (60% del recorrido)
+                // Ahora hay que hundirlo bastante para que active R1
+                if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
@@ -363,8 +363,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 _controller_host_state.lt = controller_report.rightTrigger;
                 // ==================================
 
-                // Corrección L2: Solo usa el valor analógico > 50 (aprox 20% presión)
-                if (controller_report.leftTrigger > 50) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                // Corrección L2: SUBIMOS EL UMBRAL A 160 (60% del recorrido)
+                if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
