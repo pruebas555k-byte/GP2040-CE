@@ -84,7 +84,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
 
     switch(controller_pid) {
         case PS4_PRODUCT_ID:
-        case DS4_PRODUCT_ID:           // ← unidos (sin duplicate case)
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
@@ -159,7 +158,6 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
     switch(controller_pid) {
         case DS4_ORG_PRODUCT_ID:
         case DS4_PRODUCT_ID:
-        case PS4_PRODUCT_ID:
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
