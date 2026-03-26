@@ -83,8 +83,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     init_ds5_led(dev_addr, instance);
 
     switch(controller_pid) {
-        case PS4_PRODUCT_ID:
-        case DS4_PRODUCT_ID:           // ← unidos (sin duplicate case)
+        case PS4_PRODUCT_ID:                    // ← solo uno (sin duplicado)
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
@@ -158,8 +157,7 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
     switch(controller_pid) {
         case DS4_ORG_PRODUCT_ID:
-        case DS4_PRODUCT_ID:
-        case PS4_PRODUCT_ID:
+        case DS4_PRODUCT_ID:                    // ← solo uno (sin duplicado)
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
