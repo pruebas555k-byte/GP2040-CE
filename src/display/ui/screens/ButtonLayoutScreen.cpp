@@ -564,6 +564,16 @@ void ButtonLayoutScreen::handleUSB(GPEvent* e) {
 }
 
 void ButtonLayoutScreen::trim(std::string &s) {
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-            std::not1(std::ptr_fun<int, int>(std::isspace))));
+    // Borra espacios al inicio y al final (versión moderna y sin warnings)
+    s.erase(std::remove_if(s.begin(), s.end(), 
+        [](unsigned char c) { return std::isspace(c); }), 
+        s.end());
+    
+    // Borra espacios al principio
+    size_t startpos = s.find_first_not_of(" \t\n\r\f\v");
+    if (startpos != std::string::npos) {
+        s = s.substr(startpos);
+    } else {
+        s.clear();
+    }
 }
