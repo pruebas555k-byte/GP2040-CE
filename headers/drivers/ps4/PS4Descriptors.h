@@ -14,9 +14,12 @@
 //#define PS4_PRODUCT_ID      0x0011
 
 // Razer Panthera
-#define PS4_VENDOR_ID         0x1532
-#define PS4_PRODUCT_ID        0x0401
+//#define PS4_VENDOR_ID 0x1532
+//#define PS4_PRODUCT_ID 0x0401
 
+// DualShock 4 Original
+#define PS4_VENDOR_ID 0x054C
+#define PS4_PRODUCT_ID 0x09CC
 // Madcatz Fightstick Alpha PS4
 //#define PS4_VENDOR_ID       0x0738
 //#define PS4_PRODUCT_ID      0x8180
