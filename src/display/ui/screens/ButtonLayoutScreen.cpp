@@ -228,7 +228,7 @@ void ButtonLayoutScreen::generateHeader() {
         }
     }
 
-	const GamepadOptions & options = gamepad->getOptions();
+	[[maybe_unused]] const GamepadOptions & options = gamepad->getOptions();   // ← ARREGLADO (unused)
 
     if (showDpadMode) {
         switch (gamepad->getActiveDpadMode())
@@ -551,7 +551,7 @@ void ButtonLayoutScreen::handleProfileChange(GPEvent* e) {
 }
 
 void ButtonLayoutScreen::handleUSB(GPEvent* e) {
-    GPUSBHostEvent* event = (GPUSBHostEvent*)e;
+    [[maybe_unused]] GPUSBHostEvent* event = (GPUSBHostEvent*)e;   // ← ARREGLADO (unused)
     bannerDelayStart = getMillis();
     prevProfileNumber = profileNumber;
 
