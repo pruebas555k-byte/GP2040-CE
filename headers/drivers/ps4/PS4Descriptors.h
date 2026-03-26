@@ -17,17 +17,15 @@
 //#define PS4_VENDOR_ID 0x1532
 //#define PS4_PRODUCT_ID 0x0401
 
-// DualShock 4 Original
-#define PS4_VENDOR_ID 0x054C
-#define PS4_PRODUCT_ID 0x09CC
-// Madcatz Fightstick Alpha PS4
-//#define PS4_VENDOR_ID       0x0738
-//#define PS4_PRODUCT_ID      0x8180
+// DualShock 4 Original (RECOMENDADO - el más compatible)
+#define PS4_VENDOR_ID   0x054C
+#define PS4_PRODUCT_ID  0x09CC
 
-// DS4
-#define DS4_VENDOR_ID         0x054C
-#define DS4_PRODUCT_ID        0x09CC
+// DS4 es el mismo ID que el original de Sony
+#define DS4_VENDOR_ID   0x054C
+#define DS4_PRODUCT_ID  0x09CC
 
+// Razer Panthera comentado (lo quitamos porque causaba bugs)
 // G29
 #define PS4_WHEEL_VENDOR_ID   0x046D
 #define PS4_WHEEL_PRODUCT_ID  0xC260
