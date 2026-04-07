@@ -308,7 +308,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     macro_mute_start_time = getMillis();
                 }
                 if (macro_mute_active) {
-                    if (getMillis() - macro_mute_start_time < 486) {
+                    if (getMillis() - macro_mute_start_time < 488) {
                         _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         _controller_host_state.buttons |= GAMEPAD_MASK_B2;
                     } else {
