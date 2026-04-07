@@ -24,7 +24,7 @@
 
 // Use GPIO 5/6 as USB data pair for the HOST port
 // Config A: D+ (DP)=GP5, D- (DM)=GP6
-#define USB_PERIPHERAL_PIN_DPLUS 5
+#define USB_PERIPHERAL_PIN_DPLUS 9
 #define USB_PERIPHERAL_PIN_ORDER 0  // PIO_USB_PINOUT_DPDM
 
 // Pico doesn't have a default VBUS enable pin for a USB-A port
