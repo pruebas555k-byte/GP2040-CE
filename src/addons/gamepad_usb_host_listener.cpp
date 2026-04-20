@@ -15,6 +15,8 @@
 #define LED_WARZONE_G 0x00
 #define LED_WARZONE_B 0x00
 
+#define SQUARE_HOLD_TIME 450  // Tiempo en ms que se mantiene presionado el cuadrado en EA FC
+
 enum Profile {
     PROFILE_EAFC,
     PROFILE_WARZONE
@@ -22,14 +24,23 @@ enum Profile {
 
 static Profile current_profile = PROFILE_EAFC;
 static Profile last_led_profile = PROFILE_EAFC;
+
 static uint32_t profile_switch_timer = 0;
 static bool profile_switch_held = false;
+
 static bool macro_mute_active = false;
 static uint32_t macro_mute_start_time = 0;
+
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
+
 static bool ds5_led_needs_update = true;
 static uint32_t ds5_led_retry_timer = 0;
+
+// === Variables para el nuevo macro de Cuadrado en EA FC ===
+static bool square_held = false;
+static uint32_t square_press_start_time = 0;
+static bool square_macro_active = false;
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
@@ -43,6 +54,7 @@ void GamepadUSBHostListener::process() {
     gamepad->hasAnalogTriggers = _controller_host_analog;
     gamepad->hasLeftAnalogStick = _controller_host_analog;
     gamepad->hasRightAnalogStick = _controller_host_analog;
+
     gamepad->state.dpad = _controller_host_state.dpad;
     gamepad->state.buttons = _controller_host_state.buttons;
     gamepad->state.lx = _controller_host_state.lx;
@@ -59,14 +71,12 @@ void GamepadUSBHostListener::process() {
 }
 
 void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
-    uint16_t vid = 0;
-    uint16_t pid = 0;
+    uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
     _controller_host_enabled = true;
     _controller_dev_addr = dev_addr;
     _controller_instance = instance;
-    _controller_type = 0;
     controller_vid = vid;
     controller_pid = pid;
 
@@ -80,10 +90,15 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
 
     isDS4Identified = true;
     ds5_led_needs_update = true;
+
+    // Reset macro cuadrado
+    square_held = false;
+    square_macro_active = false;
+
     init_ds5_led(dev_addr, instance);
 
     switch(controller_pid) {
-        case PS4_PRODUCT_ID:                    // ← solo uno (sin duplicado)
+        case PS4_PRODUCT_ID:
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
@@ -92,25 +107,23 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
         case DS4_ORG_PRODUCT_ID:
             setup_ds4();
             break;
-        case 0x0CE6:
-            break;
         default:
             break;
     }
 }
 
-void GamepadUSBHostListener::xmount(uint8_t dev_addr, uint8_t instance, uint8_t controllerType, uint8_t subtype) {}
-
 void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     _controller_host_enabled = false;
-    controller_pid = 0x00;
-    controller_vid = 0x00;
+    controller_pid = 0;
+    controller_vid = 0;
     _controller_dev_addr = 0;
     _controller_instance = 0;
-    _controller_type = 0;
     isDS4Identified = false;
     hasDS4DefReport = false;
     ds5_led_needs_update = true;
+
+    square_held = false;
+    square_macro_active = false;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
@@ -157,7 +170,7 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
     switch(controller_pid) {
         case DS4_ORG_PRODUCT_ID:
-        case DS4_PRODUCT_ID:                    // ← solo uno (sin duplicado)
+        case DS4_PRODUCT_ID:
         case PS4_WHEEL_PRODUCT_ID:
         case 0xB67B:
         case 0x00EE:
@@ -176,25 +189,29 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
     uint8_t const report_id = report[0];
+
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
-        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state) {
+
+        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || square_macro_active) {
+
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
+
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
             _controller_host_state.buttons = 0;
             _controller_host_analog = true;
 
+            // Cambiar de perfil (Select + Start > 2 segundos)
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
                     profile_switch_timer = getMillis();
                 } else if (getMillis() - profile_switch_timer > 2000) {
-                    if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
-                    else current_profile = PROFILE_EAFC;
+                    current_profile = (current_profile == PROFILE_EAFC) ? PROFILE_WARZONE : PROFILE_EAFC;
                     profile_switch_held = false;
                     profile_switch_timer = 0;
                     ds5_led_needs_update = true;
@@ -203,19 +220,42 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 profile_switch_held = false;
             }
 
+            // ====================== PERFIL EA FC ======================
             if (current_profile == PROFILE_EAFC) {
+
+                // === MACRO CUADRADO: Mantener presionado solo 450ms ===
+                if (controller_report.buttonWest) {                    // buttonWest = Cuadrado (Square)
+                    if (!square_held) {
+                        square_held = true;
+                        square_press_start_time = getMillis();
+                        square_macro_active = true;
+                    }
+
+                    if (square_macro_active) {
+                        if (getMillis() - square_press_start_time < SQUARE_HOLD_TIME) {
+                            _controller_host_state.buttons |= GAMEPAD_MASK_B3;  // Cuadrado = B3
+                        } else {
+                            square_macro_active = false;   // Se suelta automáticamente
+                        }
+                    }
+                } else {
+                    square_held = false;
+                    square_macro_active = false;
+                }
+
+                // Macro Mute (Home)
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
                 }
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 484) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B2;
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B3 | GAMEPAD_MASK_B2;
                     } else {
                         macro_mute_active = false;
                     }
                 }
+
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
@@ -223,12 +263,15 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
             }
+
+            // ====================== PERFIL WARZONE ======================
             else if (current_profile == PROFILE_WARZONE) {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
                     _controller_host_state.ry = recoil_val;
                 }
+
                 if (controller_report.buttonL1) {
                     if (getMillis() - turbo_timer > 40) {
                         turbo_state = !turbo_state;
@@ -238,16 +281,18 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else {
                     turbo_state = false;
                 }
-                if (controller_report.buttonSelect && !controller_report.buttonStart) {
+
+                if (controller_report.buttonSelect && !controller_report.buttonStart)
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                }
                 if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
                 if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
+            // Botones comunes a ambos perfiles
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
@@ -263,25 +308,30 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.dpad == PS4_HAT_UPLEFT) _controller_host_state.dpad |= GAMEPAD_MASK_LEFT | GAMEPAD_MASK_UP;
 
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
-            if (controller_report.buttonEast) _controller_host_state.buttons |= GAMEPAD_MASK_B2;
+            if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
-            if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+            // buttonWest (Cuadrado) ya se maneja arriba en el perfil EA FC
         }
     }
     prev_report = controller_report;
 }
 
+// Mantengo process_ds igual por si usas DualSense (puedes copiar el macro cuadrado aquí después si lo deseas)
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
     uint8_t const report_id = report[0];
+
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
+
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state) {
+
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
+
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
             _controller_host_state.buttons = 0;
@@ -292,8 +342,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     profile_switch_held = true;
                     profile_switch_timer = getMillis();
                 } else if (getMillis() - profile_switch_timer > 2000) {
-                    if (current_profile == PROFILE_EAFC) current_profile = PROFILE_WARZONE;
-                    else current_profile = PROFILE_EAFC;
+                    current_profile = (current_profile == PROFILE_EAFC) ? PROFILE_WARZONE : PROFILE_EAFC;
                     profile_switch_held = false;
                     profile_switch_timer = 0;
                     ds5_led_needs_update = true;
@@ -309,12 +358,12 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 }
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 488) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B2;
+                        _controller_host_state.buttons |= GAMEPAD_MASK_B3 | GAMEPAD_MASK_B2;
                     } else {
                         macro_mute_active = false;
                     }
                 }
+
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
@@ -328,6 +377,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
                     _controller_host_state.ry = recoil_val;
                 }
+
                 if (controller_report.buttonL1) {
                     if (getMillis() - turbo_timer > 40) {
                         turbo_state = !turbo_state;
@@ -337,12 +387,13 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 } else {
                     turbo_state = false;
                 }
-                if (controller_report.buttonSelect && !controller_report.buttonStart) {
+
+                if (controller_report.buttonSelect && !controller_report.buttonStart)
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                }
                 if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
                 if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
@@ -362,18 +413,16 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.dpad == PS4_HAT_UPLEFT) _controller_host_state.dpad |= GAMEPAD_MASK_LEFT | GAMEPAD_MASK_UP;
 
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
-            if (controller_report.buttonEast) _controller_host_state.buttons |= GAMEPAD_MASK_B2;
+            if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
-            if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+            if (controller_report.buttonWest)  _controller_host_state.buttons |= GAMEPAD_MASK_B3;
         }
     }
     prev_ds_report = controller_report;
 }
 
 void GamepadUSBHostListener::update_ds5() {
-    if (last_led_profile != current_profile) {
-        ds5_led_needs_update = true;
-    }
+    if (last_led_profile != current_profile) ds5_led_needs_update = true;
     if (!ds5_led_needs_update) return;
     if (getMillis() < ds5_led_retry_timer) return;
 
@@ -384,6 +433,7 @@ void GamepadUSBHostListener::update_ds5() {
     buf[41] = 0x01;
     buf[42] = 0x02;
     buf[43] = 0x04;
+
     if (current_profile == PROFILE_WARZONE) {
         buf[44] = LED_WARZONE_R;
         buf[45] = LED_WARZONE_G;
@@ -446,9 +496,10 @@ bool GamepadUSBHostListener::diff_than_2(uint8_t x, uint8_t y) {
 }
 
 bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const* rpt2) {
-    bool result;
-    result = diff_than_2(rpt1->leftStickX, rpt2->leftStickX) || diff_than_2(rpt1->leftStickY, rpt2->leftStickY) ||
-            diff_than_2(rpt1->rightStickX, rpt2->rightStickX) || diff_than_2(rpt1->rightStickY, rpt2->rightStickY);
+    bool result = diff_than_2(rpt1->leftStickX, rpt2->leftStickX) || 
+                  diff_than_2(rpt1->leftStickY, rpt2->leftStickY) ||
+                  diff_than_2(rpt1->rightStickX, rpt2->rightStickX) || 
+                  diff_than_2(rpt1->rightStickY, rpt2->rightStickY);
     result |= memcmp(&rpt1->rightStickY + 1, &rpt2->rightStickY + 1, sizeof(PS4Report)-6);
     return result;
 }
@@ -473,6 +524,7 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
     }
 }
 
+// Funciones vacías restantes
 void GamepadUSBHostListener::update_switch_pro() {}
 void GamepadUSBHostListener::setup_switch_pro(uint8_t const *report, uint16_t len) {}
 void GamepadUSBHostListener::process_switch_pro(uint8_t const *report, uint16_t len) {}
