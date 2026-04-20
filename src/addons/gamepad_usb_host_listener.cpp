@@ -314,7 +314,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else {
                     turbo_state = false;
                 }
-
+								if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
