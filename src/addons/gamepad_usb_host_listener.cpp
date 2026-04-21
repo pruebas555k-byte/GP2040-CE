@@ -210,7 +210,6 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             break;
     }
 }
-
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
@@ -315,9 +314,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else {
                     turbo_state = false;
                 }
-
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
@@ -346,13 +343,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
 
-            // ❗ IMPORTANTE: NO usamos buttonWest aquí directo porque ya lo controla el sistema 450ms en EAFC
+            // ❗ IMPORTANTE: NO usamos buttonWest aquí directo porque ya lo controla el sistema 450ms
         }
     }
 
     prev_report = controller_report;
 }
-
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
@@ -415,7 +411,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     }
 
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 250) {
+                        if (getMillis() - square_hold_start < 245) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
@@ -457,7 +453,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     turbo_state = false;
                 }
 
-                // ✅ FIX: cuadrado también en WARZONE para DS/DS5
+                // FIX: cuadrado también en WARZONE (DS/DS5 path)
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
 
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
@@ -488,7 +484,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
 
-            // ❗ buttonWest manejado arriba en EAFC (450ms) y directo en WARZONE
+            // ❗ buttonWest manejado arriba (250ms en EAFC / directo en WARZONE)
         }
     }
 
