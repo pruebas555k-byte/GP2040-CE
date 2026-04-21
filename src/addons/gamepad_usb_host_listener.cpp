@@ -37,7 +37,6 @@ static bool turbo_state = false;
 static bool ds5_led_needs_update = true;
 static uint32_t ds5_led_retry_timer = 0;
 
-// 🔥 NUEVO: CUADRADO 450ms
 static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
@@ -210,6 +209,7 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             break;
     }
 }
+
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
@@ -220,11 +220,10 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state) {
-
-            _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.lx = map(controller_report.leftStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.ly = map(controller_report.leftStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
 
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
@@ -232,7 +231,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             _controller_host_analog = true;
 
-            // CAMBIO DE PERFIL
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -247,10 +245,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 profile_switch_held = false;
             }
 
-            // ================= EAFC =================
             if (current_profile == PROFILE_EAFC) {
-
-                // MACRO MUTE
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
@@ -265,7 +260,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     }
                 }
 
-                // 🔥 CUADRADO 450ms
                 if (controller_report.buttonWest) {
                     if (!square_locked && !square_hold_active) {
                         square_hold_active = true;
@@ -287,18 +281,11 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-
                 _controller_host_state.lt = controller_report.rightTrigger;
-
                 if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-            }
-
-            // ================= WARZONE =================
-            else {
-
+            } else {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
@@ -314,11 +301,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 } else {
                     turbo_state = false;
                 }
-                if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-                if (controller_report.buttonSelect && !controller_report.buttonStart) {
-                    _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                }
 
+                if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
+                if (controller_report.buttonSelect && !controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 if (controller_report.buttonR1) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
                 if (controller_report.buttonHome) _controller_host_state.buttons |= GAMEPAD_MASK_A1;
@@ -327,13 +312,11 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
-            // BOTONES GENERALES
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
 
             _controller_host_state.dpad = 0;
-
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
             if (controller_report.dpad == PS4_HAT_RIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_RIGHT;
             if (controller_report.dpad == PS4_HAT_DOWN) _controller_host_state.dpad |= GAMEPAD_MASK_DOWN;
@@ -342,13 +325,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
             if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
-
-            // ❗ IMPORTANTE: NO usamos buttonWest aquí directo porque ya lo controla el sistema 450ms
         }
     }
 
     prev_report = controller_report;
 }
+
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
@@ -359,11 +341,10 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state) {
-
-            _controller_host_state.lx = map(controller_report.leftStickX, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ly = map(controller_report.leftStickY, 0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.rx = map(controller_report.rightStickX,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ry = map(controller_report.rightStickY,0,255,GAMEPAD_JOYSTICK_MIN,GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.lx = map(controller_report.leftStickX, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.ly = map(controller_report.leftStickY, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.rx = map(controller_report.rightStickX,0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.ry = map(controller_report.rightStickY,0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
 
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
@@ -371,7 +352,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
             _controller_host_analog = true;
 
-            // CAMBIO PERFIL
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -386,9 +366,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 profile_switch_held = false;
             }
 
-            // ================= EAFC =================
             if (current_profile == PROFILE_EAFC) {
-
                 if (controller_report.buttonHome && !macro_mute_active) {
                     macro_mute_active = true;
                     macro_mute_start_time = getMillis();
@@ -403,7 +381,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     }
                 }
 
-                // 🔥 CUADRADO 450ms
                 if (controller_report.buttonWest) {
                     if (!square_locked && !square_hold_active) {
                         square_hold_active = true;
@@ -411,7 +388,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     }
 
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 255 {
+                        if (getMillis() - square_hold_start < 245) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
@@ -432,11 +409,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonSelect) _controller_host_state.buttons |= GAMEPAD_MASK_S1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-            }
-
-            // ================= WARZONE =================
-            else {
-
+            } else {
                 if (controller_report.rightTrigger > 200 && controller_report.leftTrigger > 200) {
                     uint32_t recoil_val = _controller_host_state.ry + ANTI_RECOIL_STRENGTH;
                     if (recoil_val > GAMEPAD_JOYSTICK_MAX) recoil_val = GAMEPAD_JOYSTICK_MAX;
@@ -453,7 +426,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     turbo_state = false;
                 }
 
-                // FIX: cuadrado también en WARZONE (DS/DS5 path)
+                // FIX WARZONE
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
 
                 if (controller_report.buttonSelect && !controller_report.buttonStart) {
@@ -468,13 +441,11 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 _controller_host_state.rt = controller_report.rightTrigger;
             }
 
-            // GENERALES
             if (controller_report.buttonL3) _controller_host_state.buttons |= GAMEPAD_MASK_L3;
             if (controller_report.buttonR3) _controller_host_state.buttons |= GAMEPAD_MASK_R3;
             if (controller_report.buttonTouchpad) _controller_host_state.buttons |= GAMEPAD_MASK_A2;
 
             _controller_host_state.dpad = 0;
-
             if (controller_report.dpad == PS4_HAT_UP) _controller_host_state.dpad |= GAMEPAD_MASK_UP;
             if (controller_report.dpad == PS4_HAT_RIGHT) _controller_host_state.dpad |= GAMEPAD_MASK_RIGHT;
             if (controller_report.dpad == PS4_HAT_DOWN) _controller_host_state.dpad |= GAMEPAD_MASK_DOWN;
@@ -483,8 +454,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             if (controller_report.buttonNorth) _controller_host_state.buttons |= GAMEPAD_MASK_B4;
             if (controller_report.buttonEast)  _controller_host_state.buttons |= GAMEPAD_MASK_B2;
             if (controller_report.buttonSouth) _controller_host_state.buttons |= GAMEPAD_MASK_B1;
-
-            // ❗ buttonWest manejado arriba (250ms en EAFC / directo en WARZONE)
         }
     }
 
