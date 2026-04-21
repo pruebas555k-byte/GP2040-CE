@@ -388,7 +388,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     }
 
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 248) {
+                        if (getMillis() - square_hold_start < 242) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
