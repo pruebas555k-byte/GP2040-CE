@@ -219,7 +219,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state) {
+        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
             _controller_host_state.lx = map(controller_report.leftStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
@@ -340,7 +340,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state) {
+        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
             _controller_host_state.lx = map(controller_report.leftStickX, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.ly = map(controller_report.leftStickY, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             _controller_host_state.rx = map(controller_report.rightStickX,0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
