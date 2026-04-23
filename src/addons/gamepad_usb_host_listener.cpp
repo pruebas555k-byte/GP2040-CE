@@ -7,7 +7,7 @@
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
-#define ANTI_RECOIL_STRENGTH 3000
+#define ANTI_RECOIL_STRENGTH 2600
 
 #define LED_EAFC_R 0xFF
 #define LED_EAFC_G 0xFF
@@ -267,7 +267,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     }
 
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 248) {
+                        if (getMillis() - square_hold_start < 253) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
