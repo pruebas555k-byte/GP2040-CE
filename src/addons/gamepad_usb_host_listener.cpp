@@ -36,6 +36,12 @@ static bool     sq_was_pressed  = false;
 static uint32_t sq_release_time = 0;
 #define SQ_MODE_TAIL_MS 300
 
+// [SQUARE MODE] - Remeson al presionar cuadrado
+static bool     sq_bump_active = false;
+static uint32_t sq_bump_start  = 0;
+#define SQ_BUMP_MS     50
+#define SQ_BUMP_OFFSET 1800
+
 // Curva normal EAFC
 static uint16_t applyCurve(uint8_t raw) {
     int offset = (int)raw - 128;
@@ -68,7 +74,7 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Curva mas lenta pero con sensibilidad inicial decente
+// [SQUARE MODE] - Curva mas lenta/resistente, aun menos sensible
 static uint16_t applyCurveSlow(uint8_t raw) {
     int offset = (int)raw - 128;
     int sign   = (offset >= 0) ? 1 : -1;
@@ -81,17 +87,16 @@ static uint16_t applyCurveSlow(uint8_t raw) {
     int mag255 = (mag * 255 + 64) / 128;
     if (mag255 > 255) mag255 = 255;
 
-    // Mas sensible al inicio que la version anterior, pero sigue siendo
-    // notablemente mas lenta/resistente que applyCurve normal
+    // Inicio mas apagado, techo mas bajo que version anterior
     int out255;
     if (mag255 <= 40)
-        out255 = 70  * mag255 / 40;
+        out255 = 50  * mag255 / 40;
     else if (mag255 <= 120)
-        out255 = 70  + (140 - 70)  * (mag255 - 40)  / (120 - 40);
+        out255 = 50  + (110 - 50)  * (mag255 - 40)  / (120 - 40);
     else if (mag255 <= 200)
-        out255 = 140 + (195 - 140) * (mag255 - 120) / (200 - 120);
+        out255 = 110 + (170 - 110) * (mag255 - 120) / (200 - 120);
     else
-        out255 = 195 + (225 - 195) * (mag255 - 200) / (255 - 200);
+        out255 = 170 + (205 - 170) * (mag255 - 200) / (255 - 200);
 
     int out128  = out255 * 128 / 255;
     int raw_out = 128 + sign * out128;
@@ -102,49 +107,27 @@ static uint16_t applyCurveSlow(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Cono +-45 grados desde arriba + bloqueo mitad inferior
-// Si el stick esta fuera del cono → redirige al borde mas cercano (no bloquea)
-static void applySquareModeFilter(uint16_t &lx, uint16_t &ly) {
-    int dx = (int)lx - (int)GAMEPAD_JOYSTICK_MID;
-    int dy = (int)ly - (int)GAMEPAD_JOYSTICK_MID;
-
-    // dy > 0 = mitad inferior (abajo en PS4) → bloquear al centro
-    if (dy > 0) {
-        lx = GAMEPAD_JOYSTICK_MID;
-        ly = GAMEPAD_JOYSTICK_MID;
-        return;
-    }
-
-    // Mitad superior (dy <= 0)
-    int absDy = -dy;  // positivo
-    int absDx = (dx < 0) ? -dx : dx;
-
-    if (absDy == 0) {
-        // Centro exacto
-        lx = GAMEPAD_JOYSTICK_MID;
-        ly = GAMEPAD_JOYSTICK_MID;
-        return;
-    }
-
-    // Cono +-45 grados: |dx| <= |dy|
-    // Si fuera del cono → comprimir dx al borde mas cercano del cono
-    if (absDx > absDy) {
-        int sign_dx = (dx >= 0) ? 1 : -1;
-        dx = sign_dx * absDy;  // borde exacto +-45 grados
-    }
-
-    lx = (uint16_t)((int)GAMEPAD_JOYSTICK_MID + dx);
-    ly = (uint16_t)((int)GAMEPAD_JOYSTICK_MID + dy);
-
-    if (lx < GAMEPAD_JOYSTICK_MIN) lx = GAMEPAD_JOYSTICK_MIN;
-    if (lx > GAMEPAD_JOYSTICK_MAX) lx = GAMEPAD_JOYSTICK_MAX;
-    if (ly < GAMEPAD_JOYSTICK_MIN) ly = GAMEPAD_JOYSTICK_MIN;
-    if (ly > GAMEPAD_JOYSTICK_MAX) ly = GAMEPAD_JOYSTICK_MAX;
+// [SQUARE MODE] - Aplica remeson sobre lx/ly si esta activo (empuja arriba-izquierda levemente)
+static void applySquareBump(uint16_t &lx, uint16_t &ly) {
+    if (!sq_bump_active) return;
+    int32_t x = (int32_t)lx - SQ_BUMP_OFFSET;
+    int32_t y = (int32_t)ly - SQ_BUMP_OFFSET;
+    if (x < (int32_t)GAMEPAD_JOYSTICK_MIN) x = GAMEPAD_JOYSTICK_MIN;
+    if (x > (int32_t)GAMEPAD_JOYSTICK_MAX) x = GAMEPAD_JOYSTICK_MAX;
+    if (y < (int32_t)GAMEPAD_JOYSTICK_MIN) y = GAMEPAD_JOYSTICK_MIN;
+    if (y > (int32_t)GAMEPAD_JOYSTICK_MAX) y = GAMEPAD_JOYSTICK_MAX;
+    lx = (uint16_t)x;
+    ly = (uint16_t)y;
 }
 
 // [SQUARE MODE] - Actualizar estado segun si cuadrado esta apretado
 static void updateSquareMode(bool buttonWest) {
     if (buttonWest) {
+        if (!sq_was_pressed) {
+            // Flanco de bajada: activar remeson
+            sq_bump_active = true;
+            sq_bump_start  = getMillis();
+        }
         sq_mode_active  = true;
         sq_was_pressed  = true;
         sq_release_time = 0;
@@ -158,6 +141,10 @@ static void updateSquareMode(bool buttonWest) {
                 sq_mode_active = false;
             }
         }
+    }
+    // Expirar remeson
+    if (sq_bump_active && getMillis() - sq_bump_start >= SQ_BUMP_MS) {
+        sq_bump_active = false;
     }
 }
 
@@ -324,7 +311,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 if (sq_mode_active) {
                     _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
-                    applySquareModeFilter(_controller_host_state.lx, _controller_host_state.ly);
+                    applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
@@ -454,7 +441,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 if (sq_mode_active) {
                     _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
-                    applySquareModeFilter(_controller_host_state.lx, _controller_host_state.ly);
+                    applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
