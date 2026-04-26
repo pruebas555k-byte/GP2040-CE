@@ -9,13 +9,7 @@
 
 #define ANTI_RECOIL_STRENGTH 2600
 
-#define LED_EAFC_R 0xFF
-#define LED_EAFC_G 0xFF
-#define LED_EAFC_B 0xFF
-
-#define LED_WARZONE_R 0xFF
-#define LED_WARZONE_G 0x00
-#define LED_WARZONE_B 0x00
+#define STICK_DIGITAL_THRESHOLD 64
 
 enum Profile {
     PROFILE_EAFC,
@@ -23,7 +17,6 @@ enum Profile {
 };
 
 static Profile current_profile = PROFILE_EAFC;
-static Profile last_led_profile = PROFILE_EAFC;
 
 static uint32_t profile_switch_timer = 0;
 static bool profile_switch_held = false;
@@ -34,12 +27,15 @@ static uint32_t macro_mute_start_time = 0;
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
 
-static bool ds5_led_needs_update = true;
-static uint32_t ds5_led_retry_timer = 0;
-
 static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
+
+static uint16_t digitalizeAxis(uint8_t raw) {
+    if (raw < (128 - STICK_DIGITAL_THRESHOLD)) return GAMEPAD_JOYSTICK_MIN;
+    if (raw > (128 + STICK_DIGITAL_THRESHOLD)) return GAMEPAD_JOYSTICK_MAX;
+    return GAMEPAD_JOYSTICK_MID;
+}
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
@@ -97,9 +93,8 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.dpad = 0;
 
     isDS4Identified = true;
-    ds5_led_needs_update = true;
 
-    init_ds5_led(dev_addr, instance);
+    tuh_hid_receive_report(dev_addr, instance);
 
     switch(controller_pid) {
         case PS4_PRODUCT_ID:
@@ -135,50 +130,6 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 
     isDS4Identified = false;
     hasDS4DefReport = false;
-
-    ds5_led_needs_update = true;
-}
-
-void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    uint8_t buf[47];
-    memset(buf, 0, sizeof(buf));
-
-    buf[1] = 0x14;
-    buf[38] = 0x02;
-    buf[41] = 0x01;
-    buf[42] = 0x02;
-    buf[43] = 0x04;
-
-    buf[44] = LED_EAFC_R;
-    buf[45] = LED_EAFC_G;
-    buf[46] = LED_EAFC_B;
-
-    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
-        uint8_t buf2[48];
-        memset(buf2, 0, sizeof(buf2));
-
-        buf2[0] = 0x02;
-        buf2[2] = 0x14;
-        buf2[39] = 0x02;
-        buf2[42] = 0x01;
-        buf2[43] = 0x02;
-        buf2[44] = 0x04;
-
-        buf2[45] = LED_EAFC_R;
-        buf2[46] = LED_EAFC_G;
-        buf2[47] = LED_EAFC_B;
-
-        while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
-            tuh_task();
-        }
-    }
-
-    last_led_profile = PROFILE_EAFC;
-    current_profile = PROFILE_EAFC;
-
-    tuh_hid_receive_report(dev_addr, instance);
-
-    ds5_led_needs_update = false;
 }
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
@@ -220,10 +171,10 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
-            _controller_host_state.lx = map(controller_report.leftStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ly = map(controller_report.leftStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.lx = digitalizeAxis(controller_report.leftStickX);
+            _controller_host_state.ly = digitalizeAxis(controller_report.leftStickY);
+            _controller_host_state.rx = digitalizeAxis(controller_report.rightStickX);
+            _controller_host_state.ry = digitalizeAxis(controller_report.rightStickY);
 
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
@@ -239,7 +190,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     current_profile = (current_profile == PROFILE_EAFC) ? PROFILE_WARZONE : PROFILE_EAFC;
                     profile_switch_held = false;
                     profile_switch_timer = 0;
-                    ds5_led_needs_update = true;
                 }
             } else {
                 profile_switch_held = false;
@@ -341,10 +291,10 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
-            _controller_host_state.lx = map(controller_report.leftStickX, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ly = map(controller_report.leftStickY, 0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.rx = map(controller_report.rightStickX,0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-            _controller_host_state.ry = map(controller_report.rightStickY,0,255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+            _controller_host_state.lx = digitalizeAxis(controller_report.leftStickX);
+            _controller_host_state.ly = digitalizeAxis(controller_report.leftStickY);
+            _controller_host_state.rx = digitalizeAxis(controller_report.rightStickX);
+            _controller_host_state.ry = digitalizeAxis(controller_report.rightStickY);
 
             _controller_host_state.lt = 0;
             _controller_host_state.rt = 0;
@@ -360,7 +310,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     current_profile = (current_profile == PROFILE_EAFC) ? PROFILE_WARZONE : PROFILE_EAFC;
                     profile_switch_held = false;
                     profile_switch_timer = 0;
-                    ds5_led_needs_update = true;
                 }
             } else {
                 profile_switch_held = false;
@@ -460,44 +409,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     prev_ds_report = controller_report;
 }
 
-void GamepadUSBHostListener::update_ds5() {
-    if (last_led_profile != current_profile) {
-        ds5_led_needs_update = true;
-    }
-
-    if (!ds5_led_needs_update) return;
-    if (getMillis() < ds5_led_retry_timer) return;
-
-    uint8_t buf[47];
-    memset(buf, 0, sizeof(buf));
-
-    buf[1] = 0x14;
-    buf[38] = 0x02;
-    buf[41] = 0x01;
-    buf[42] = 0x02;
-    buf[43] = 0x04;
-
-    if (current_profile == PROFILE_WARZONE) {
-        buf[44] = LED_WARZONE_R;
-        buf[45] = LED_WARZONE_G;
-        buf[46] = LED_WARZONE_B;
-    } else {
-        buf[44] = LED_EAFC_R;
-        buf[45] = LED_EAFC_G;
-        buf[46] = LED_EAFC_B;
-    }
-
-    if (tuh_hid_send_report(_controller_dev_addr, _controller_instance, 0x02, buf, 47)) {
-        last_led_profile = current_profile;
-        ds5_led_needs_update = false;
-    } else {
-        ds5_led_retry_timer = getMillis() + 100;
-    }
-}
-
 void GamepadUSBHostListener::update_ctrlr() {
-    update_ds5();
-
     if (controller_pid == DS4_ORG_PRODUCT_ID || controller_pid == DS4_PRODUCT_ID ||
         controller_pid == PS4_PRODUCT_ID || controller_pid == PS4_WHEEL_PRODUCT_ID ||
         controller_pid == 0xB67B || controller_pid == 0x00EE) {
