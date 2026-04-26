@@ -45,16 +45,13 @@ static uint16_t applyCurve(uint8_t raw) {
     int mag    = (offset < 0) ? -offset : offset;  // 0 a 128
 
     // --- ZONA MUERTA ---
-    // Si el desvio fisico es menor que DEADZONE_RAW, devolver el centro exacto.
+    // Corte limpio: sin reescalar, para no distorsionar los porcentajes reales.
     if (mag <= DEADZONE_RAW) {
         return (uint16_t)GAMEPAD_JOYSTICK_MID;
     }
 
-    // Restar la deadzone y reescalar para que la curva arranque desde 0
-    // despues de la zona muerta, sin salto brusco.
-    int mag_adj = mag - DEADZONE_RAW;                        // 0 a (128 - DEADZONE_RAW)
-    int mag_max = 128 - DEADZONE_RAW;                        // rango util
-    int mag255  = mag_adj * 255 / mag_max;                   // escalar a 0-255
+    // Escalar magnitud directamente a 0-255 (proporcional al recorrido fisico real)
+    int mag255 = (mag * 255 + 64) / 128;
     if (mag255 > 255) mag255 = 255;
 
     // Interpolacion piecewise sobre los puntos de la curva
