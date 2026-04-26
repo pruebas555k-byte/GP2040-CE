@@ -32,18 +32,24 @@ static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
 
-// Curva exacta: (0,0)->(26,102)->(128,179)->(200,228)->(255,255)
-static uint16_t eafcCurve(uint8_t raw) {
-    uint8_t out;
-    if (raw <= 26) {
-        out = (uint8_t)((uint32_t)raw * 102 / 26);
-    } else if (raw <= 128) {
-        out = (uint8_t)(102 + (uint32_t)(raw - 26) * (179 - 102) / (128 - 26));
-    } else if (raw <= 200) {
-        out = (uint8_t)(179 + (uint32_t)(raw - 128) * (228 - 179) / (200 - 128));
-    } else {
-        out = (uint8_t)(228 + (uint32_t)(raw - 200) * (255 - 228) / (255 - 200));
-    }
+// Curva piecewise linear exacta: (0,0)->(26,102)->(128,179)->(200,228)->(255,255)
+static uint16_t applyCurve(uint8_t x) {
+    const int x0 = 0,   y0 = 0;
+    const int x1 = 26,  y1 = 102;
+    const int x2 = 128, y2 = 179;
+    const int x3 = 200, y3 = 228;
+    const int x4 = 255, y4 = 255;
+
+    int out;
+    if (x <= x1)
+        out = y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    else if (x <= x2)
+        out = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+    else if (x <= x3)
+        out = y2 + (y3 - y2) * (x - x2) / (x3 - x2);
+    else
+        out = y3 + (y4 - y3) * (x - x3) / (x4 - x3);
+
     return (uint16_t)((uint32_t)out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
 }
 
@@ -57,9 +63,9 @@ void GamepadUSBHostListener::setup() {
 void GamepadUSBHostListener::process() {
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
 
-    gamepad->hasAnalogTriggers    = _controller_host_analog;
-    gamepad->hasLeftAnalogStick   = _controller_host_analog;
-    gamepad->hasRightAnalogStick  = _controller_host_analog;
+    gamepad->hasAnalogTriggers   = _controller_host_analog;
+    gamepad->hasLeftAnalogStick  = _controller_host_analog;
+    gamepad->hasRightAnalogStick = _controller_host_analog;
 
     gamepad->state.dpad    = _controller_host_state.dpad;
     gamepad->state.buttons = _controller_host_state.buttons;
@@ -218,12 +224,12 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // Curva exacta en EAFC, analogico puro en Warzone
+            // Curva piecewise exact en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
-                _controller_host_state.lx = eafcCurve(controller_report.leftStickX);
-                _controller_host_state.ly = eafcCurve(controller_report.leftStickY);
-                _controller_host_state.rx = eafcCurve(controller_report.rightStickX);
-                _controller_host_state.ry = eafcCurve(controller_report.rightStickY);
+                _controller_host_state.lx = applyCurve(controller_report.leftStickX);
+                _controller_host_state.ly = applyCurve(controller_report.leftStickY);
+                _controller_host_state.rx = applyCurve(controller_report.rightStickX);
+                _controller_host_state.ry = applyCurve(controller_report.rightStickY);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
@@ -305,9 +311,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                 if (controller_report.buttonSelect && !controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                if (controller_report.buttonR1)    _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                if (controller_report.buttonStart)  _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-                if (controller_report.buttonHome)   _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+                if (controller_report.buttonR1)   _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
+                if (controller_report.buttonHome)  _controller_host_state.buttons |= GAMEPAD_MASK_A1;
 
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
@@ -343,12 +349,12 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // Curva exacta en EAFC, analogico puro en Warzone
+            // Curva piecewise exact en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
-                _controller_host_state.lx = eafcCurve(controller_report.leftStickX);
-                _controller_host_state.ly = eafcCurve(controller_report.leftStickY);
-                _controller_host_state.rx = eafcCurve(controller_report.rightStickX);
-                _controller_host_state.ry = eafcCurve(controller_report.rightStickY);
+                _controller_host_state.lx = applyCurve(controller_report.leftStickX);
+                _controller_host_state.ly = applyCurve(controller_report.leftStickY);
+                _controller_host_state.rx = applyCurve(controller_report.rightStickX);
+                _controller_host_state.ry = applyCurve(controller_report.rightStickY);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
@@ -435,9 +441,9 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
 
-                if (controller_report.buttonR1)    _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                if (controller_report.buttonStart)  _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-                if (controller_report.buttonHome)   _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+                if (controller_report.buttonR1)   _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
+                if (controller_report.buttonHome)  _controller_host_state.buttons |= GAMEPAD_MASK_A1;
 
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
