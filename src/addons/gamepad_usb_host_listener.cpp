@@ -1,3 +1,5 @@
+siii
+
 #include "addons/gamepad_usb_host_listener.h"
 #include "storagemanager.h"
 #include "class/hid/hid.h"
@@ -27,6 +29,13 @@ static bool turbo_state = false;
 static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
+
+// R1+R2 one-shot state
+// Cuando se aprietan juntos: manda R1+R2 un solo frame, luego R1 queda
+// desactivado hasta que se suelte R1 y se vuelva a apretar solo.
+static bool r1r2_oneshot_fired  = false;  // ya se mandó el frame one-shot
+static bool r1r2_combo_held     = false;  // el combo está siendo sostenido
+static bool r1_disabled         = false;  // R1 bloqueado hasta soltarlo solo
 
 // Zona muerta en unidades raw (0-255).
 // Cualquier desvio menor a DEADZONE_RAW se trata como 0 → salida = centro exacto.
@@ -220,6 +229,57 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
     }
 }
 
+// ---------------------------------------------------------------------------
+// Macro helper: lógica R1+R2 one-shot compartida entre process_ds4 y process_ds
+// ---------------------------------------------------------------------------
+// Recibe el estado crudo de R1 y R2 del reporte y escribe en _controller_host_state.
+// Reglas:
+//   - R1 solo                  → rt = 255  (comportamiento normal)
+//   - R1+R2 juntos (primer frame) → rt = 255 + GAMEPAD_MASK_R1 (one-shot), luego R1 desactivado
+//   - R1+R2 sostenidos          → R1 sigue desactivado (solo R2 pasa)
+//   - Se suelta R1              → se limpia r1_disabled, vuelve al normal
+// ---------------------------------------------------------------------------
+static void apply_eafc_r1r2(bool r1, bool r2,
+                              uint16_t& buttons, uint8_t& rt,
+                              uint8_t rightTriggerRaw)
+{
+    if (r1 && r2) {
+        // Combo detectado
+        if (!r1r2_combo_held) {
+            // Primer frame del combo → one-shot
+            r1r2_combo_held    = true;
+            r1r2_oneshot_fired = false;
+        }
+
+        if (!r1r2_oneshot_fired) {
+            // Mandar R1+R2 este único frame
+            rt                 = 255;                    // R2 → rt
+            buttons           |= GAMEPAD_MASK_R1;       // R1 → botón R1 del host (ajustá el mask si usás otro)
+            r1r2_oneshot_fired = true;
+            r1_disabled        = true;                   // a partir de acá R1 queda mudo
+        } else {
+            // Frames siguientes con combo sostenido: solo pasa R2, R1 silenciado
+            rt = rightTriggerRaw;   // R2 raw (o 255 si lo preferís fijo)
+            // R1 no se agrega
+        }
+    } else {
+        // Combo suelto
+        if (r1r2_combo_held) {
+            r1r2_combo_held    = false;
+            r1r2_oneshot_fired = false;
+        }
+
+        // Si R1 estaba desactivado, esperar a que se suelte para rehabilitarlo
+        if (r1_disabled) {
+            if (!r1) r1_disabled = false;   // se soltó R1 → vuelve a funcionar
+            // mientras está presionado y desactivado, no hace nada
+        } else {
+            // Comportamiento normal de R1
+            if (r1) rt = 255;
+        }
+    }
+}
+
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
@@ -289,7 +349,15 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                if (controller_report.buttonR1) _controller_host_state.rt = 255;
+                // --- R1 / R2 con one-shot ---
+                apply_eafc_r1r2(
+                    controller_report.buttonR1,
+                    (controller_report.rightTrigger > 200),   // umbral R2 analógico
+                    _controller_host_state.buttons,
+                    _controller_host_state.rt,
+                    controller_report.rightTrigger
+                );
+
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
                 if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
@@ -410,7 +478,15 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                if (controller_report.buttonR1) _controller_host_state.rt = 255;
+                // --- R1 / R2 con one-shot ---
+                apply_eafc_r1r2(
+                    controller_report.buttonR1,
+                    (controller_report.rightTrigger > 200),   // umbral R2 analógico
+                    _controller_host_state.buttons,
+                    _controller_host_state.rt,
+                    controller_report.rightTrigger
+                );
+
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
                 if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
