@@ -40,6 +40,21 @@ static uint16_t digitalizeAxis(uint8_t raw) {
     return GAMEPAD_JOYSTICK_MID;
 }
 
+// Curva personalizada left stick EAFC: (0,0)->(26,102)->(128,179)->(200,228)->(255,255)
+static uint16_t applyLeftStickCurve(uint8_t raw) {
+    uint8_t out;
+    if (raw <= 26) {
+        out = (uint8_t)((uint32_t)raw * 102 / 26);
+    } else if (raw <= 128) {
+        out = (uint8_t)(102 + (uint32_t)(raw - 26) * (179 - 102) / (128 - 26));
+    } else if (raw <= 200) {
+        out = (uint8_t)(179 + (uint32_t)(raw - 128) * (228 - 179) / (200 - 128));
+    } else {
+        out = (uint8_t)(228 + (uint32_t)(raw - 200) * (255 - 228) / (255 - 200));
+    }
+    return (uint16_t)((uint32_t)out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
+}
+
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
 #if GAMEPAD_HOST_DEBUG
@@ -211,10 +226,11 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // --- Sticks: digital en EAFC, analogico en Warzone ---
             if (current_profile == PROFILE_EAFC) {
-                _controller_host_state.lx = digitalizeAxis(controller_report.leftStickX);
-                _controller_host_state.ly = digitalizeAxis(controller_report.leftStickY);
+                // Left stick: curva personalizada
+                _controller_host_state.lx = applyLeftStickCurve(controller_report.leftStickX);
+                _controller_host_state.ly = applyLeftStickCurve(controller_report.leftStickY);
+                // Right stick: sigue digital
                 _controller_host_state.rx = digitalizeAxis(controller_report.rightStickX);
                 _controller_host_state.ry = digitalizeAxis(controller_report.rightStickY);
             } else {
@@ -337,10 +353,11 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // --- Sticks: digital en EAFC, analogico en Warzone ---
             if (current_profile == PROFILE_EAFC) {
-                _controller_host_state.lx = digitalizeAxis(controller_report.leftStickX);
-                _controller_host_state.ly = digitalizeAxis(controller_report.leftStickY);
+                // Left stick: curva personalizada
+                _controller_host_state.lx = applyLeftStickCurve(controller_report.leftStickX);
+                _controller_host_state.ly = applyLeftStickCurve(controller_report.leftStickY);
+                // Right stick: sigue digital
                 _controller_host_state.rx = digitalizeAxis(controller_report.rightStickX);
                 _controller_host_state.ry = digitalizeAxis(controller_report.rightStickY);
             } else {
