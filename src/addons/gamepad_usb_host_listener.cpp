@@ -28,23 +28,13 @@ static bool square_hold_active        = false;
 static bool square_locked             = false;
 static uint32_t square_hold_start     = 0;
 
-// R1 one-shot (EAFC):
-// - R1+R2 juntos → manda ambos 150ms, luego R1 se corta sin importar si R2 sigue apretado
-// - Para volver a usar R1: soltar R1 fisicamente y apretarlo solo
-static bool r1_disabled     = false;
-static bool r1r2_triggered  = false;
-static uint32_t r1r2_start  = 0;
-static bool r1_was_released = true;
-
-#define R1_ONESHOT_MS 150
-
 #define DEADZONE_RAW 6
 
-// [SQUARE MODE] - estado: activo mientras cuadrado apretado + 300ms despues de soltar
-static bool     sq_mode_active    = false;  // esta activo el modo restringido
-static bool     sq_was_pressed    = false;  // cuadrado estaba apretado el frame anterior
-static uint32_t sq_release_time   = 0;      // momento en que se solto cuadrado
-#define SQ_MODE_TAIL_MS 300                 // ms que dura el efecto tras soltar cuadrado
+// [SQUARE MODE] - activo mientras cuadrado apretado + 300ms despues de soltar
+static bool     sq_mode_active  = false;
+static bool     sq_was_pressed  = false;
+static uint32_t sq_release_time = 0;
+#define SQ_MODE_TAIL_MS 300
 
 // Curva normal EAFC
 static uint16_t applyCurve(uint8_t raw) {
@@ -78,30 +68,30 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Curva mas lenta/resistente para el stick izquierdo
+// [SQUARE MODE] - Curva mas lenta pero con sensibilidad inicial decente
 static uint16_t applyCurveSlow(uint8_t raw) {
     int offset = (int)raw - 128;
     int sign   = (offset >= 0) ? 1 : -1;
     int mag    = (offset < 0) ? -offset : offset;
 
-    // Deadzone un poco mas grande
-    if (mag <= DEADZONE_RAW + 6) {
+    if (mag <= DEADZONE_RAW) {
         return (uint16_t)GAMEPAD_JOYSTICK_MID;
     }
 
     int mag255 = (mag * 255 + 64) / 128;
     if (mag255 > 255) mag255 = 255;
 
-    // Curva mucho mas lenta: respuesta suave, no llega al maximo total
+    // Mas sensible al inicio que la version anterior, pero sigue siendo
+    // notablemente mas lenta/resistente que applyCurve normal
     int out255;
-    if (mag255 <= 50)
-        out255 = 35  * mag255 / 50;
-    else if (mag255 <= 130)
-        out255 = 35  + (100 - 35)  * (mag255 - 50)  / (130 - 50);
-    else if (mag255 <= 210)
-        out255 = 100 + (165 - 100) * (mag255 - 130) / (210 - 130);
+    if (mag255 <= 40)
+        out255 = 70  * mag255 / 40;
+    else if (mag255 <= 120)
+        out255 = 70  + (140 - 70)  * (mag255 - 40)  / (120 - 40);
+    else if (mag255 <= 200)
+        out255 = 140 + (195 - 140) * (mag255 - 120) / (200 - 120);
     else
-        out255 = 165 + (200 - 165) * (mag255 - 210) / (255 - 210);
+        out255 = 195 + (225 - 195) * (mag255 - 200) / (255 - 200);
 
     int out128  = out255 * 128 / 255;
     int raw_out = 128 + sign * out128;
@@ -112,53 +102,47 @@ static uint16_t applyCurveSlow(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Aplica restriccion de cono +-45 grados desde arriba + bloqueo mitad inferior
-// Trabaja sobre los valores ya mapeados al rango joystick (lx, ly)
+// [SQUARE MODE] - Cono +-45 grados desde arriba + bloqueo mitad inferior
+// Si el stick esta fuera del cono → redirige al borde mas cercano (no bloquea)
 static void applySquareModeFilter(uint16_t &lx, uint16_t &ly) {
-    // Convertir de rango joystick a -128..+127
     int dx = (int)lx - (int)GAMEPAD_JOYSTICK_MID;
     int dy = (int)ly - (int)GAMEPAD_JOYSTICK_MID;
 
-    // dy positivo = abajo (Y aumenta hacia abajo en PS4)
-    // Bloquear mitad inferior: si dy > 0 → clavar al centro
+    // dy > 0 = mitad inferior (abajo en PS4) → bloquear al centro
     if (dy > 0) {
         lx = GAMEPAD_JOYSTICK_MID;
         ly = GAMEPAD_JOYSTICK_MID;
         return;
     }
 
-    // Estamos en la mitad superior (dy <= 0)
-    // Cono +-45 grados desde arriba: tan(45) = 1, condicion: |dx| <= |dy|
-    // Si |dx| > |dy| → estamos fuera del cono, comprimir dx al borde del cono
-    int absDy = -dy;  // ahora positivo
+    // Mitad superior (dy <= 0)
+    int absDy = -dy;  // positivo
     int absDx = (dx < 0) ? -dx : dx;
 
     if (absDy == 0) {
-        // Stick exactamente en el centro o eje horizontal → bloquear
+        // Centro exacto
         lx = GAMEPAD_JOYSTICK_MID;
         ly = GAMEPAD_JOYSTICK_MID;
         return;
     }
 
+    // Cono +-45 grados: |dx| <= |dy|
+    // Si fuera del cono → comprimir dx al borde mas cercano del cono
     if (absDx > absDy) {
-        // Fuera del cono: comprimir X al borde +-45 grados (|dx| = |dy|)
         int sign_dx = (dx >= 0) ? 1 : -1;
-        dx = sign_dx * absDy;
+        dx = sign_dx * absDy;  // borde exacto +-45 grados
     }
 
-    // Reconstruir valores joystick
     lx = (uint16_t)((int)GAMEPAD_JOYSTICK_MID + dx);
     ly = (uint16_t)((int)GAMEPAD_JOYSTICK_MID + dy);
 
-    // Clamp por seguridad
     if (lx < GAMEPAD_JOYSTICK_MIN) lx = GAMEPAD_JOYSTICK_MIN;
     if (lx > GAMEPAD_JOYSTICK_MAX) lx = GAMEPAD_JOYSTICK_MAX;
     if (ly < GAMEPAD_JOYSTICK_MIN) ly = GAMEPAD_JOYSTICK_MIN;
     if (ly > GAMEPAD_JOYSTICK_MAX) ly = GAMEPAD_JOYSTICK_MAX;
 }
 
-// [SQUARE MODE] - Actualizar estado del modo segun si cuadrado esta apretado
-// Llamar ANTES de procesar el stick izquierdo
+// [SQUARE MODE] - Actualizar estado segun si cuadrado esta apretado
 static void updateSquareMode(bool buttonWest) {
     if (buttonWest) {
         sq_mode_active  = true;
@@ -166,11 +150,9 @@ static void updateSquareMode(bool buttonWest) {
         sq_release_time = 0;
     } else {
         if (sq_was_pressed) {
-            // Acaba de soltarse: arrancar timer tail
             sq_was_pressed  = false;
             sq_release_time = getMillis();
         }
-        // Mantener activo durante SQ_MODE_TAIL_MS tras soltar
         if (sq_mode_active && sq_release_time != 0) {
             if (getMillis() - sq_release_time >= SQ_MODE_TAIL_MS) {
                 sq_mode_active = false;
@@ -178,42 +160,6 @@ static void updateSquareMode(bool buttonWest) {
         }
     }
 }
-
-#define HANDLE_R1_ONESHOT(btnR1, trigR2)                                      \
-    do {                                                                      \
-        bool _r1 = (btnR1);                                                   \
-        bool _r2 = ((trigR2) > 200);                                          \
-                                                                              \
-        if (!_r1) {                                                           \
-            r1_was_released = true;                                           \
-            if (!_r2) r1r2_triggered = false;                                 \
-        }                                                                     \
-                                                                              \
-        if (_r1 && _r2 && !r1r2_triggered) {                                  \
-            r1r2_triggered  = true;                                           \
-            r1r2_start      = getMillis();                                    \
-            r1_disabled     = false;                                          \
-            r1_was_released = false;                                          \
-        }                                                                     \
-                                                                              \
-        if (r1r2_triggered) {                                                 \
-            if (getMillis() - r1r2_start < R1_ONESHOT_MS) {                  \
-                _controller_host_state.rt = 255;                              \
-            } else {                                                          \
-                r1_disabled = true;                                           \
-            }                                                                 \
-        }                                                                     \
-                                                                              \
-        if (_r1 && !_r2 && r1_disabled && r1_was_released) {                  \
-            r1_disabled     = false;                                          \
-            r1_was_released = false;                                          \
-            r1r2_triggered  = false;                                          \
-        }                                                                     \
-                                                                              \
-        if (_r1 && !r1_disabled && !r1r2_triggered) {                         \
-            _controller_host_state.rt = 255;                                  \
-        }                                                                     \
-    } while(0)
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
@@ -369,17 +315,15 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || r1r2_triggered || sq_mode_active) {
+        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
 
             if (current_profile == PROFILE_EAFC) {
-                // [SQUARE MODE] Actualizar estado del modo antes de calcular el stick
+                // [SQUARE MODE] actualizar estado antes de calcular stick
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    // Curva lenta para el stick izquierdo
                     _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
-                    // Aplicar filtro de cono +-45 grados + bloqueo mitad inferior
                     applySquareModeFilter(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
@@ -440,8 +384,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
-
+                if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
                 if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
@@ -502,17 +445,15 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || r1r2_triggered || sq_mode_active) {
+        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
 
             if (current_profile == PROFILE_EAFC) {
-                // [SQUARE MODE] Actualizar estado del modo antes de calcular el stick
+                // [SQUARE MODE] actualizar estado antes de calcular stick
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    // Curva lenta para el stick izquierdo
                     _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
-                    // Aplicar filtro de cono +-45 grados + bloqueo mitad inferior
                     applySquareModeFilter(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
@@ -573,8 +514,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
-
+                if (controller_report.buttonR1) _controller_host_state.rt = 255;
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
                 if (controller_report.leftTrigger > 160) _controller_host_state.buttons |= GAMEPAD_MASK_R1;
