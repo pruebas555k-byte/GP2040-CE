@@ -29,13 +29,14 @@ static bool square_locked             = false;
 static uint32_t square_hold_start     = 0;
 
 // R1 one-shot (EAFC):
-// - R1+R2 juntos → manda R1+R2 durante 200ms, luego R1 se desactiva automaticamente
-// - R1 solo       → re-habilita R1 y funciona normal
-static bool r1_disabled    = false;
-static bool r1r2_held      = false;
-static uint32_t r1r2_start = 0;
+// - R1+R2 juntos → manda R1+R2 durante 150ms, luego R1 se desactiva
+// - Para volver a usar R1: soltar R1 fisicamente y volver a apretarlo solo
+static bool r1_disabled     = false;
+static bool r1r2_held       = false;
+static uint32_t r1r2_start  = 0;
+static bool r1_was_released = true;  // exige soltar R1 antes de rehabilitarlo
 
-#define R1_ONESHOT_MS 200
+#define R1_ONESHOT_MS 150
 
 #define DEADZONE_RAW 6
 
@@ -74,33 +75,40 @@ static uint16_t applyCurve(uint8_t raw) {
 }
 
 // Macro para R1 one-shot en EAFC.
-// R1+R2 → envia RT durante R1_ONESHOT_MS, luego bloquea R1.
-// R1 solo → desbloquea R1.
+// R1+R2 → envia ambos durante R1_ONESHOT_MS, luego bloquea R1.
+// Para rehabilitar R1: soltar R1 fisicamente y volver a apretarlo solo.
 #define HANDLE_R1_ONESHOT(btnR1, trigR2)                                  \
     do {                                                                  \
         bool _r1 = (btnR1);                                               \
         bool _r2 = ((trigR2) > 200);                                      \
-        if (_r1 && _r2 && !r1r2_held) {                                   \
-            /* Recien presionados: arranca el timer */                    \
-            r1r2_held  = true;                                            \
-            r1r2_start = getMillis();                                     \
-            r1_disabled = false;                                          \
+        /* Detectar cuando R1 se suelta fisicamente */                    \
+        if (!_r1) {                                                       \
+            r1_was_released = true;                                       \
         }                                                                 \
+        /* Arrancar combo R1+R2 */                                        \
+        if (_r1 && _r2 && !r1r2_held) {                                   \
+            r1r2_held       = true;                                       \
+            r1r2_start      = getMillis();                                \
+            r1_disabled     = false;                                      \
+            r1_was_released = false;                                      \
+        }                                                                 \
+        /* Durante el combo: mandar R1+R2 */                              \
         if (r1r2_held) {                                                  \
             if (getMillis() - r1r2_start < R1_ONESHOT_MS) {              \
-                /* Dentro de los 200ms: manda R1+R2 normal */             \
                 _controller_host_state.rt = 255;                          \
             } else {                                                      \
-                /* Pasaron 200ms: bloquea R1 */                           \
+                /* Pasaron 150ms: bloquear R1 */                          \
                 r1_disabled = true;                                       \
+                r1r2_held   = false;                                      \
             }                                                             \
         }                                                                 \
-        if (!_r1 && !_r2) {                                               \
-            r1r2_held = false;                                            \
+        /* Rehabilitar R1: solo si fue soltado fisicamente y se aprieta solo */ \
+        if (_r1 && !_r2 && r1_disabled && r1_was_released) {             \
+            r1_disabled     = false;                                      \
+            r1_was_released = false;                                      \
         }                                                                 \
-        if (_r1 && !_r2) {                                                \
-            /* R1 solo: desbloquea */                                     \
-            r1_disabled = false;                                          \
+        /* Mandar R1 normal si no esta bloqueado */                       \
+        if (_r1 && !r1_disabled && !r1r2_held) {                         \
             _controller_host_state.rt = 255;                              \
         }                                                                 \
     } while(0)
@@ -319,7 +327,8 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // R1 one-shot: R1+R2 → manda RT durante 200ms, luego bloquea R1. R1 solo → desbloquea.
+                // R1 one-shot: R1+R2 → 150ms luego R1 se bloquea.
+                // Para volver a usar R1: soltar R1 y apretarlo solo.
                 HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
@@ -442,7 +451,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // R1 one-shot: R1+R2 → manda RT durante 200ms, luego bloquea R1. R1 solo → desbloquea.
+                // R1 one-shot: R1+R2 → 150ms luego R1 se bloquea.
+                // Para volver a usar R1: soltar R1 y apretarlo solo.
                 HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
