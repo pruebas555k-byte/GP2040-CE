@@ -4,7 +4,6 @@
 #include "class/hid/hid_host.h"
 #include "pico/stdlib.h"
 #include <cstring>
-#include <cmath>
 #include "drivers/ps4/PS4Descriptors.h"
 #include "drivers/ps4/PS4Driver.h"
 
@@ -33,20 +32,19 @@ static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
 
+// Curva exacta: (0,0)->(26,102)->(128,179)->(200,228)->(255,255)
 static uint16_t eafcCurve(uint8_t raw) {
-    float x = (raw - 128) / 127.0f;
-
-    float curved;
-    if (fabsf(x) < 0.4f)
-        curved = x * 2.2f;
-    else
-        curved = (x > 0 ? 1.0f : -1.0f) * (0.4f * 2.2f + (fabsf(x) - 0.4f) * 0.8f);
-
-    float result = curved * 127.0f + 128.0f;
-    if (result < 0.0f)   result = 0.0f;
-    if (result > 255.0f) result = 255.0f;
-
-    return (uint16_t)((uint32_t)(uint8_t)result * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
+    uint8_t out;
+    if (raw <= 26) {
+        out = (uint8_t)((uint32_t)raw * 102 / 26);
+    } else if (raw <= 128) {
+        out = (uint8_t)(102 + (uint32_t)(raw - 26) * (179 - 102) / (128 - 26));
+    } else if (raw <= 200) {
+        out = (uint8_t)(179 + (uint32_t)(raw - 128) * (228 - 179) / (200 - 128));
+    } else {
+        out = (uint8_t)(228 + (uint32_t)(raw - 200) * (255 - 228) / (255 - 200));
+    }
+    return (uint16_t)((uint32_t)out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
 }
 
 void GamepadUSBHostListener::setup() {
@@ -59,9 +57,9 @@ void GamepadUSBHostListener::setup() {
 void GamepadUSBHostListener::process() {
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
 
-    gamepad->hasAnalogTriggers = _controller_host_analog;
-    gamepad->hasLeftAnalogStick = _controller_host_analog;
-    gamepad->hasRightAnalogStick = _controller_host_analog;
+    gamepad->hasAnalogTriggers    = _controller_host_analog;
+    gamepad->hasLeftAnalogStick   = _controller_host_analog;
+    gamepad->hasRightAnalogStick  = _controller_host_analog;
 
     gamepad->state.dpad    = _controller_host_state.dpad;
     gamepad->state.buttons = _controller_host_state.buttons;
@@ -87,9 +85,9 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
     _controller_host_enabled = true;
-    _controller_dev_addr = dev_addr;
-    _controller_instance = instance;
-    _controller_type = 0;
+    _controller_dev_addr     = dev_addr;
+    _controller_instance     = instance;
+    _controller_type         = 0;
 
     controller_vid = vid;
     controller_pid = pid;
@@ -104,8 +102,8 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad    = 0;
 
-    isDS4Identified  = true;
-    current_profile  = PROFILE_EAFC;
+    isDS4Identified = true;
+    current_profile = PROFILE_EAFC;
 
     init_ds5_led(dev_addr, instance);
 
@@ -141,8 +139,8 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     _controller_instance = 0;
     _controller_type     = 0;
 
-    isDS4Identified  = false;
-    hasDS4DefReport  = false;
+    isDS4Identified = false;
+    hasDS4DefReport = false;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
@@ -220,7 +218,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // --- Sticks: curva EAFC / analogico puro Warzone ---
+            // Curva exacta en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = eafcCurve(controller_report.leftStickX);
                 _controller_host_state.ly = eafcCurve(controller_report.leftStickY);
@@ -239,7 +237,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             _controller_host_analog = true;
 
-            // --- Cambio de perfil: Share + Options ---
+            // Cambio de perfil: Share + Options
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -251,7 +249,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
             if (current_profile == PROFILE_EAFC) {
                 if (controller_report.buttonHome && !macro_mute_active) {
-                    macro_mute_active = true;
+                    macro_mute_active     = true;
                     macro_mute_start_time = getMillis();
                 }
 
@@ -269,7 +267,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                         square_hold_active = true;
                         square_hold_start  = getMillis();
                     }
-
                     if (square_hold_active) {
                         if (getMillis() - square_hold_start < 253) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
@@ -308,9 +305,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                 if (controller_report.buttonSelect && !controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                if (controller_report.buttonR1)  _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-                if (controller_report.buttonHome)  _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+                if (controller_report.buttonR1)    _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                if (controller_report.buttonStart)  _controller_host_state.buttons |= GAMEPAD_MASK_S2;
+                if (controller_report.buttonHome)   _controller_host_state.buttons |= GAMEPAD_MASK_A1;
 
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
@@ -346,7 +343,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // --- Sticks: curva EAFC / analogico puro Warzone ---
+            // Curva exacta en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = eafcCurve(controller_report.leftStickX);
                 _controller_host_state.ly = eafcCurve(controller_report.leftStickY);
@@ -365,7 +362,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
             _controller_host_analog = true;
 
-            // --- Cambio de perfil: Share + Options ---
+            // Cambio de perfil: Share + Options
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -377,7 +374,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
             if (current_profile == PROFILE_EAFC) {
                 if (controller_report.buttonHome && !macro_mute_active) {
-                    macro_mute_active = true;
+                    macro_mute_active     = true;
                     macro_mute_start_time = getMillis();
                 }
 
@@ -395,7 +392,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                         square_hold_active = true;
                         square_hold_start  = getMillis();
                     }
-
                     if (square_hold_active) {
                         if (getMillis() - square_hold_start < 242) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
@@ -439,9 +435,9 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 }
 
-                if (controller_report.buttonR1)   _controller_host_state.buttons |= GAMEPAD_MASK_R1;
-                if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
-                if (controller_report.buttonHome)  _controller_host_state.buttons |= GAMEPAD_MASK_A1;
+                if (controller_report.buttonR1)    _controller_host_state.buttons |= GAMEPAD_MASK_R1;
+                if (controller_report.buttonStart)  _controller_host_state.buttons |= GAMEPAD_MASK_S2;
+                if (controller_report.buttonHome)   _controller_host_state.buttons |= GAMEPAD_MASK_A1;
 
                 _controller_host_state.lt = controller_report.leftTrigger;
                 _controller_host_state.rt = controller_report.rightTrigger;
