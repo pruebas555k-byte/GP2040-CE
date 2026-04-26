@@ -1,5 +1,3 @@
-siii
-
 #include "addons/gamepad_usb_host_listener.h"
 #include "storagemanager.h"
 #include "class/hid/hid.h"
@@ -20,50 +18,39 @@ enum Profile {
     PROFILE_WARZONE
 };
 
-static Profile current_profile = PROFILE_EAFC;
-static bool profile_switch_held = false;
-static bool macro_mute_active = false;
+static Profile current_profile        = PROFILE_EAFC;
+static bool profile_switch_held       = false;
+static bool macro_mute_active         = false;
 static uint32_t macro_mute_start_time = 0;
-static uint32_t turbo_timer = 0;
-static bool turbo_state = false;
-static bool square_hold_active = false;
-static bool square_locked = false;
-static uint32_t square_hold_start = 0;
+static uint32_t turbo_timer           = 0;
+static bool turbo_state               = false;
+static bool square_hold_active        = false;
+static bool square_locked             = false;
+static uint32_t square_hold_start     = 0;
 
-// R1+R2 one-shot state
-// Cuando se aprietan juntos: manda R1+R2 un solo frame, luego R1 queda
-// desactivado hasta que se suelte R1 y se vuelva a apretar solo.
-static bool r1r2_oneshot_fired  = false;  // ya se mandó el frame one-shot
-static bool r1r2_combo_held     = false;  // el combo está siendo sostenido
-static bool r1_disabled         = false;  // R1 bloqueado hasta soltarlo solo
+// R1 one-shot (EAFC):
+// - R1+R2 juntos → manda R1+R2 una vez, luego R1 se desactiva automaticamente
+// - R1 solo       → re-habilita R1 y funciona normal
+static bool r1_disabled = false;
+static bool r1r2_held   = false;
 
-// Zona muerta en unidades raw (0-255).
-// Cualquier desvio menor a DEADZONE_RAW se trata como 0 → salida = centro exacto.
 #define DEADZONE_RAW 6
 
 // Curva simetrica desde el centro.
-// Puntos definidos sobre la MAGNITUD del desvio (escala 0-255):
-// (0,0)  (26,102)  (128,179)  (200,228)  (255,255)
-//
-// raw=128 → offset=0 → deadzone → sale exactamente GAMEPAD_JOYSTICK_MID  (0,0 en el host)
-// raw muy cercano a 128 (ruido) → dentro de deadzone → mismo resultado
-// raw=128±6 (primer punto apreciable) → sube por la curva desde 0
+// Puntos sobre magnitud (0-255): (0,0)(26,102)(128,179)(200,228)(255,255)
+// raw=128 → deadzone → GAMEPAD_JOYSTICK_MID exacto (0,0 en el host)
 static uint16_t applyCurve(uint8_t raw) {
-    int offset = (int)raw - 128;                   // -128 a +127
+    int offset = (int)raw - 128;
     int sign   = (offset >= 0) ? 1 : -1;
-    int mag    = (offset < 0) ? -offset : offset;  // 0 a 128
+    int mag    = (offset < 0) ? -offset : offset;
 
-    // --- ZONA MUERTA ---
-    // Corte limpio: sin reescalar, para no distorsionar los porcentajes reales.
     if (mag <= DEADZONE_RAW) {
         return (uint16_t)GAMEPAD_JOYSTICK_MID;
     }
 
-    // Escalar magnitud directamente a 0-255 (proporcional al recorrido fisico real)
     int mag255 = (mag * 255 + 64) / 128;
     if (mag255 > 255) mag255 = 255;
 
-    // Interpolacion piecewise sobre los puntos de la curva
     int out255;
     if (mag255 <= 26)
         out255 = 102 * mag255 / 26;
@@ -74,7 +61,6 @@ static uint16_t applyCurve(uint8_t raw) {
     else
         out255 = 228 + (255 - 228) * (mag255 - 200) / (255 - 200);
 
-    // Volver a escala 0-128 y aplicar signo sobre el centro
     int out128  = out255 * 128 / 255;
     int raw_out = 128 + sign * out128;
     if (raw_out < 0)   raw_out = 0;
@@ -83,6 +69,28 @@ static uint16_t applyCurve(uint8_t raw) {
     return (uint16_t)((uint32_t)raw_out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
                       + GAMEPAD_JOYSTICK_MIN);
 }
+
+// Macro para R1 one-shot en EAFC.
+// R1+R2 → envia RT, bloquea R1. R1 solo → desbloquea R1.
+#define HANDLE_R1_ONESHOT(btnR1, trigR2)                          \
+    do {                                                          \
+        bool _r1 = (btnR1);                                       \
+        bool _r2 = ((trigR2) > 200);                              \
+        if (_r1 && _r2 && !r1r2_held) {                           \
+            _controller_host_state.rt = 255;                      \
+            r1_disabled = true;                                   \
+            r1r2_held   = true;                                   \
+        }                                                         \
+        if (!_r1 && !_r2) {                                       \
+            r1r2_held = false;                                    \
+        }                                                         \
+        if (_r1 && !_r2) {                                        \
+            r1_disabled = false;                                  \
+        }                                                         \
+        if (_r1 && !r1_disabled) {                                \
+            _controller_host_state.rt = 255;                      \
+        }                                                         \
+    } while(0)
 
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
@@ -229,57 +237,6 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
     }
 }
 
-// ---------------------------------------------------------------------------
-// Macro helper: lógica R1+R2 one-shot compartida entre process_ds4 y process_ds
-// ---------------------------------------------------------------------------
-// Recibe el estado crudo de R1 y R2 del reporte y escribe en _controller_host_state.
-// Reglas:
-//   - R1 solo                  → rt = 255  (comportamiento normal)
-//   - R1+R2 juntos (primer frame) → rt = 255 + GAMEPAD_MASK_R1 (one-shot), luego R1 desactivado
-//   - R1+R2 sostenidos          → R1 sigue desactivado (solo R2 pasa)
-//   - Se suelta R1              → se limpia r1_disabled, vuelve al normal
-// ---------------------------------------------------------------------------
-static void apply_eafc_r1r2(bool r1, bool r2,
-                              uint16_t& buttons, uint8_t& rt,
-                              uint8_t rightTriggerRaw)
-{
-    if (r1 && r2) {
-        // Combo detectado
-        if (!r1r2_combo_held) {
-            // Primer frame del combo → one-shot
-            r1r2_combo_held    = true;
-            r1r2_oneshot_fired = false;
-        }
-
-        if (!r1r2_oneshot_fired) {
-            // Mandar R1+R2 este único frame
-            rt                 = 255;                    // R2 → rt
-            buttons           |= GAMEPAD_MASK_R1;       // R1 → botón R1 del host (ajustá el mask si usás otro)
-            r1r2_oneshot_fired = true;
-            r1_disabled        = true;                   // a partir de acá R1 queda mudo
-        } else {
-            // Frames siguientes con combo sostenido: solo pasa R2, R1 silenciado
-            rt = rightTriggerRaw;   // R2 raw (o 255 si lo preferís fijo)
-            // R1 no se agrega
-        }
-    } else {
-        // Combo suelto
-        if (r1r2_combo_held) {
-            r1r2_combo_held    = false;
-            r1r2_oneshot_fired = false;
-        }
-
-        // Si R1 estaba desactivado, esperar a que se suelte para rehabilitarlo
-        if (r1_disabled) {
-            if (!r1) r1_disabled = false;   // se soltó R1 → vuelve a funcionar
-            // mientras está presionado y desactivado, no hace nada
-        } else {
-            // Comportamiento normal de R1
-            if (r1) rt = 255;
-        }
-    }
-}
-
 void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
@@ -349,14 +306,8 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // --- R1 / R2 con one-shot ---
-                apply_eafc_r1r2(
-                    controller_report.buttonR1,
-                    (controller_report.rightTrigger > 200),   // umbral R2 analógico
-                    _controller_host_state.buttons,
-                    _controller_host_state.rt,
-                    controller_report.rightTrigger
-                );
+                // R1 one-shot: R1+R2 → manda RT y bloquea R1. R1 solo → desbloquea.
+                HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
@@ -478,14 +429,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // --- R1 / R2 con one-shot ---
-                apply_eafc_r1r2(
-                    controller_report.buttonR1,
-                    (controller_report.rightTrigger > 200),   // umbral R2 analógico
-                    _controller_host_state.buttons,
-                    _controller_host_state.rt,
-                    controller_report.rightTrigger
-                );
+                // R1 one-shot: R1+R2 → manda RT y bloquea R1. R1 solo → desbloquea.
+                HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 _controller_host_state.lt = controller_report.rightTrigger;
