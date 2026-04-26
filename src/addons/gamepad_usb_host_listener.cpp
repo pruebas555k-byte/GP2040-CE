@@ -29,10 +29,13 @@ static bool square_locked             = false;
 static uint32_t square_hold_start     = 0;
 
 // R1 one-shot (EAFC):
-// - R1+R2 juntos → manda R1+R2 una vez, luego R1 se desactiva automaticamente
+// - R1+R2 juntos → manda R1+R2 durante 200ms, luego R1 se desactiva automaticamente
 // - R1 solo       → re-habilita R1 y funciona normal
-static bool r1_disabled = false;
-static bool r1r2_held   = false;
+static bool r1_disabled    = false;
+static bool r1r2_held      = false;
+static uint32_t r1r2_start = 0;
+
+#define R1_ONESHOT_MS 200
 
 #define DEADZONE_RAW 6
 
@@ -71,25 +74,35 @@ static uint16_t applyCurve(uint8_t raw) {
 }
 
 // Macro para R1 one-shot en EAFC.
-// R1+R2 → envia RT, bloquea R1. R1 solo → desbloquea R1.
-#define HANDLE_R1_ONESHOT(btnR1, trigR2)                          \
-    do {                                                          \
-        bool _r1 = (btnR1);                                       \
-        bool _r2 = ((trigR2) > 200);                              \
-        if (_r1 && _r2 && !r1r2_held) {                           \
-            _controller_host_state.rt = 255;                      \
-            r1_disabled = true;                                   \
-            r1r2_held   = true;                                   \
-        }                                                         \
-        if (!_r1 && !_r2) {                                       \
-            r1r2_held = false;                                    \
-        }                                                         \
-        if (_r1 && !_r2) {                                        \
-            r1_disabled = false;                                  \
-        }                                                         \
-        if (_r1 && !r1_disabled) {                                \
-            _controller_host_state.rt = 255;                      \
-        }                                                         \
+// R1+R2 → envia RT durante R1_ONESHOT_MS, luego bloquea R1.
+// R1 solo → desbloquea R1.
+#define HANDLE_R1_ONESHOT(btnR1, trigR2)                                  \
+    do {                                                                  \
+        bool _r1 = (btnR1);                                               \
+        bool _r2 = ((trigR2) > 200);                                      \
+        if (_r1 && _r2 && !r1r2_held) {                                   \
+            /* Recien presionados: arranca el timer */                    \
+            r1r2_held  = true;                                            \
+            r1r2_start = getMillis();                                     \
+            r1_disabled = false;                                          \
+        }                                                                 \
+        if (r1r2_held) {                                                  \
+            if (getMillis() - r1r2_start < R1_ONESHOT_MS) {              \
+                /* Dentro de los 200ms: manda R1+R2 normal */             \
+                _controller_host_state.rt = 255;                          \
+            } else {                                                      \
+                /* Pasaron 200ms: bloquea R1 */                           \
+                r1_disabled = true;                                       \
+            }                                                             \
+        }                                                                 \
+        if (!_r1 && !_r2) {                                               \
+            r1r2_held = false;                                            \
+        }                                                                 \
+        if (_r1 && !_r2) {                                                \
+            /* R1 solo: desbloquea */                                     \
+            r1_disabled = false;                                          \
+            _controller_host_state.rt = 255;                              \
+        }                                                                 \
     } while(0)
 
 void GamepadUSBHostListener::setup() {
@@ -246,7 +259,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
+        if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || r1r2_held) {
 
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = applyCurve(controller_report.leftStickX);
@@ -306,7 +319,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // R1 one-shot: R1+R2 → manda RT y bloquea R1. R1 solo → desbloquea.
+                // R1 one-shot: R1+R2 → manda RT durante 200ms, luego bloquea R1. R1 solo → desbloquea.
                 HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
@@ -369,7 +382,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report_id == 1) {
         memcpy(&controller_report, report, sizeof(controller_report));
 
-        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
+        if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || r1r2_held) {
 
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = applyCurve(controller_report.leftStickX);
@@ -429,7 +442,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     square_locked      = false;
                 }
 
-                // R1 one-shot: R1+R2 → manda RT y bloquea R1. R1 solo → desbloquea.
+                // R1 one-shot: R1+R2 → manda RT durante 200ms, luego bloquea R1. R1 solo → desbloquea.
                 HANDLE_R1_ONESHOT(controller_report.buttonR1, controller_report.rightTrigger);
 
                 if (controller_report.buttonL1) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
