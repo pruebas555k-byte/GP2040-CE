@@ -19,38 +19,47 @@ enum Profile {
 };
 
 static Profile current_profile = PROFILE_EAFC;
-
 static bool profile_switch_held = false;
-
 static bool macro_mute_active = false;
 static uint32_t macro_mute_start_time = 0;
-
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
-
 static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
 
-// Curva piecewise linear exacta: (0,0)->(26,102)->(128,179)->(200,228)->(255,255)
-static uint16_t applyCurve(uint8_t x) {
-    const int x0 = 0,   y0 = 0;
-    const int x1 = 26,  y1 = 102;
-    const int x2 = 128, y2 = 179;
-    const int x3 = 200, y3 = 228;
-    const int x4 = 255, y4 = 255;
+// Curva simetrica desde el centro:
+// raw=128 → siempre sale 128 (reposo = neutro)
+// La curva (0,0)(26,102)(128,179)(200,228)(255,255)
+// se aplica a la MAGNITUD del desvio, no al valor absoluto
+static uint16_t applyCurve(uint8_t raw) {
+    int offset = (int)raw - 128;                  // -128 a +127
+    int sign   = (offset >= 0) ? 1 : -1;
+    int mag    = (offset < 0) ? -offset : offset; // 0 a 128
 
-    int out;
-    if (x <= x1)
-        out = y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-    else if (x <= x2)
-        out = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
-    else if (x <= x3)
-        out = y2 + (y3 - y2) * (x - x2) / (x3 - x2);
+    // Escalar magnitud a 0-255 para usar los puntos de la curva
+    int mag255 = mag * 255 / 128;
+    if (mag255 > 255) mag255 = 255;
+
+    // Interpolacion piecewise exacta sobre la magnitud escalada
+    int out255;
+    if (mag255 <= 26)
+        out255 = 102 * mag255 / 26;
+    else if (mag255 <= 128)
+        out255 = 102 + (179 - 102) * (mag255 - 26)  / (128 - 26);
+    else if (mag255 <= 200)
+        out255 = 179 + (228 - 179) * (mag255 - 128) / (200 - 128);
     else
-        out = y3 + (y4 - y3) * (x - x3) / (x4 - x3);
+        out255 = 228 + (255 - 228) * (mag255 - 200) / (255 - 200);
 
-    return (uint16_t)((uint32_t)out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
+    // Volver a escala 0-128 y aplicar signo sobre el centro
+    int out128  = out255 * 128 / 255;
+    int raw_out = 128 + sign * out128;
+    if (raw_out < 0)   raw_out = 0;
+    if (raw_out > 255) raw_out = 255;
+
+    return (uint16_t)((uint32_t)raw_out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
+                      + GAMEPAD_JOYSTICK_MIN);
 }
 
 void GamepadUSBHostListener::setup() {
@@ -69,14 +78,12 @@ void GamepadUSBHostListener::process() {
 
     gamepad->state.dpad    = _controller_host_state.dpad;
     gamepad->state.buttons = _controller_host_state.buttons;
-
-    gamepad->state.lx = _controller_host_state.lx;
-    gamepad->state.ly = _controller_host_state.ly;
-    gamepad->state.rx = _controller_host_state.rx;
-    gamepad->state.ry = _controller_host_state.ry;
-
-    gamepad->state.rt = _controller_host_state.rt;
-    gamepad->state.lt = _controller_host_state.lt;
+    gamepad->state.lx      = _controller_host_state.lx;
+    gamepad->state.ly      = _controller_host_state.ly;
+    gamepad->state.rx      = _controller_host_state.rx;
+    gamepad->state.ry      = _controller_host_state.ry;
+    gamepad->state.rt      = _controller_host_state.rt;
+    gamepad->state.lt      = _controller_host_state.lt;
 
     if (_controller_host_enabled && getMillis() > _next_update) {
         update_ctrlr();
@@ -100,11 +107,10 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
 
     uint16_t joystick_mid = GAMEPAD_JOYSTICK_MID;
 
-    _controller_host_state.lx = joystick_mid;
-    _controller_host_state.ly = joystick_mid;
-    _controller_host_state.rx = joystick_mid;
-    _controller_host_state.ry = joystick_mid;
-
+    _controller_host_state.lx      = joystick_mid;
+    _controller_host_state.ly      = joystick_mid;
+    _controller_host_state.rx      = joystick_mid;
+    _controller_host_state.ry      = joystick_mid;
     _controller_host_state.buttons = 0;
     _controller_host_state.dpad    = 0;
 
@@ -120,14 +126,11 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
         case 0x00EE:
             init_ds4(desc_report, desc_len);
             break;
-
         case DS4_ORG_PRODUCT_ID:
             setup_ds4();
             break;
-
         case 0x0CE6:
             break;
-
         default:
             break;
     }
@@ -137,16 +140,13 @@ void GamepadUSBHostListener::xmount(uint8_t dev_addr, uint8_t instance, uint8_t 
 
 void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     _controller_host_enabled = false;
-
-    controller_pid = 0x00;
-    controller_vid = 0x00;
-
-    _controller_dev_addr = 0;
-    _controller_instance = 0;
-    _controller_type     = 0;
-
-    isDS4Identified = false;
-    hasDS4DefReport = false;
+    controller_pid           = 0x00;
+    controller_vid           = 0x00;
+    _controller_dev_addr     = 0;
+    _controller_instance     = 0;
+    _controller_type         = 0;
+    isDS4Identified          = false;
+    hasDS4DefReport          = false;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
@@ -165,7 +165,6 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
         uint8_t buf2[48];
         memset(buf2, 0, sizeof(buf2));
-
         buf2[0]  = 0x02;
         buf2[2]  = 0x14;
         buf2[39] = 0x02;
@@ -175,7 +174,6 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         buf2[45] = LED_DEFAULT_R;
         buf2[46] = LED_DEFAULT_G;
         buf2[47] = LED_DEFAULT_B;
-
         while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
             tuh_task();
         }
@@ -186,10 +184,8 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     if (_controller_host_enabled == false) return;
-
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
-
     process_ctrlr_report(dev_addr, report, len);
 }
 
@@ -202,11 +198,9 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
         case 0x00EE:
             if (isDS4Identified) process_ds4(report, len);
             break;
-
         case 0x0CE6:
             process_ds(report, len);
             break;
-
         default:
             process_ds(report, len);
             break;
@@ -224,7 +218,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // Curva piecewise exact en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                 _controller_host_state.ly = applyCurve(controller_report.leftStickY);
@@ -240,10 +233,8 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             _controller_host_state.lt      = 0;
             _controller_host_state.rt      = 0;
             _controller_host_state.buttons = 0;
+            _controller_host_analog        = true;
 
-            _controller_host_analog = true;
-
-            // Cambio de perfil: Share + Options
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -258,7 +249,6 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                     macro_mute_active     = true;
                     macro_mute_start_time = getMillis();
                 }
-
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 484) {
                         _controller_host_state.buttons |= GAMEPAD_MASK_B3;
@@ -349,7 +339,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest) {
 
-            // Curva piecewise exact en EAFC, analogico puro en Warzone
             if (current_profile == PROFILE_EAFC) {
                 _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                 _controller_host_state.ly = applyCurve(controller_report.leftStickY);
@@ -365,10 +354,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             _controller_host_state.lt      = 0;
             _controller_host_state.rt      = 0;
             _controller_host_state.buttons = 0;
+            _controller_host_analog        = true;
 
-            _controller_host_analog = true;
-
-            // Cambio de perfil: Share + Options
             if (controller_report.buttonSelect && controller_report.buttonStart) {
                 if (!profile_switch_held) {
                     profile_switch_held = true;
@@ -383,7 +370,6 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                     macro_mute_active     = true;
                     macro_mute_start_time = getMillis();
                 }
-
                 if (macro_mute_active) {
                     if (getMillis() - macro_mute_start_time < 488) {
                         _controller_host_state.buttons |= GAMEPAD_MASK_B3;
@@ -436,11 +422,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
                 // FIX WARZONE
                 if (controller_report.buttonWest) _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-
-                if (controller_report.buttonSelect && !controller_report.buttonStart) {
-                    _controller_host_state.buttons |= GAMEPAD_MASK_L1;
-                }
-
+                if (controller_report.buttonSelect && !controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_L1;
                 if (controller_report.buttonR1)   _controller_host_state.buttons |= GAMEPAD_MASK_R1;
                 if (controller_report.buttonStart) _controller_host_state.buttons |= GAMEPAD_MASK_S2;
                 if (controller_report.buttonHome)  _controller_host_state.buttons |= GAMEPAD_MASK_A1;
@@ -509,14 +491,11 @@ bool GamepadUSBHostListener::diff_than_2(uint8_t x, uint8_t y) {
 
 bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const* rpt2) {
     bool result;
-
     result = diff_than_2(rpt1->leftStickX,  rpt2->leftStickX)  ||
              diff_than_2(rpt1->leftStickY,  rpt2->leftStickY)  ||
              diff_than_2(rpt1->rightStickX, rpt2->rightStickX) ||
              diff_than_2(rpt1->rightStickY, rpt2->rightStickY);
-
     result |= memcmp(&rpt1->rightStickY + 1, &rpt2->rightStickY + 1, sizeof(PS4Report)-6);
-
     return result;
 }
 
@@ -535,7 +514,6 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
         if (report_info[i].report_id == PS4AuthReport::PS4_DEFINITION) {
             memset(report_buffer, 0, PS4_ENDPOINT_SIZE);
             report_buffer[0] = PS4AuthReport::PS4_DEFINITION;
-
             host_get_report(PS4AuthReport::PS4_DEFINITION, report_buffer, 48);
             hasDS4DefReport = true;
             break;
