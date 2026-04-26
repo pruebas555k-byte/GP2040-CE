@@ -28,20 +28,36 @@ static bool square_hold_active = false;
 static bool square_locked = false;
 static uint32_t square_hold_start = 0;
 
-// Curva simetrica desde el centro:
-// raw=128 → siempre sale 128 (reposo = neutro)
-// La curva (0,0)(26,102)(128,179)(200,228)(255,255)
-// se aplica a la MAGNITUD del desvio, no al valor absoluto
-static uint16_t applyCurve(uint8_t raw) {
-    int offset = (int)raw - 128;                  // -128 a +127
-    int sign   = (offset >= 0) ? 1 : -1;
-    int mag    = (offset < 0) ? -offset : offset; // 0 a 128
+// Zona muerta en unidades raw (0-255).
+// Cualquier desvio menor a DEADZONE_RAW se trata como 0 → salida = centro exacto.
+#define DEADZONE_RAW 6
 
-    // Escalar magnitud a 0-255 para usar los puntos de la curva
-    int mag255 = mag * 255 / 128;
+// Curva simetrica desde el centro.
+// Puntos definidos sobre la MAGNITUD del desvio (escala 0-255):
+// (0,0)  (26,102)  (128,179)  (200,228)  (255,255)
+//
+// raw=128 → offset=0 → deadzone → sale exactamente GAMEPAD_JOYSTICK_MID  (0,0 en el host)
+// raw muy cercano a 128 (ruido) → dentro de deadzone → mismo resultado
+// raw=128±6 (primer punto apreciable) → sube por la curva desde 0
+static uint16_t applyCurve(uint8_t raw) {
+    int offset = (int)raw - 128;                   // -128 a +127
+    int sign   = (offset >= 0) ? 1 : -1;
+    int mag    = (offset < 0) ? -offset : offset;  // 0 a 128
+
+    // --- ZONA MUERTA ---
+    // Si el desvio fisico es menor que DEADZONE_RAW, devolver el centro exacto.
+    if (mag <= DEADZONE_RAW) {
+        return (uint16_t)GAMEPAD_JOYSTICK_MID;
+    }
+
+    // Restar la deadzone y reescalar para que la curva arranque desde 0
+    // despues de la zona muerta, sin salto brusco.
+    int mag_adj = mag - DEADZONE_RAW;                        // 0 a (128 - DEADZONE_RAW)
+    int mag_max = 128 - DEADZONE_RAW;                        // rango util
+    int mag255  = mag_adj * 255 / mag_max;                   // escalar a 0-255
     if (mag255 > 255) mag255 = 255;
 
-    // Interpolacion piecewise exacta sobre la magnitud escalada
+    // Interpolacion piecewise sobre los puntos de la curva
     int out255;
     if (mag255 <= 26)
         out255 = 102 * mag255 / 26;
