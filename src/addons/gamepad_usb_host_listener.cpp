@@ -74,7 +74,7 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Curva mas lenta/resistente, aun menos sensible
+// [SQUARE MODE] - Curva lenta que llega a 255, progresion suave sin brusquedad lateral
 static uint16_t applyCurveSlow(uint8_t raw) {
     int offset = (int)raw - 128;
     int sign   = (offset >= 0) ? 1 : -1;
@@ -87,16 +87,16 @@ static uint16_t applyCurveSlow(uint8_t raw) {
     int mag255 = (mag * 255 + 64) / 128;
     if (mag255 > 255) mag255 = 255;
 
-    // Inicio mas apagado, techo mas bajo que version anterior
+    // Inicio suave, zona media muy progresiva (no brusca en laterales), llega a 255 al full
     int out255;
-    if (mag255 <= 40)
-        out255 = 50  * mag255 / 40;
-    else if (mag255 <= 120)
-        out255 = 50  + (110 - 50)  * (mag255 - 40)  / (120 - 40);
-    else if (mag255 <= 200)
-        out255 = 110 + (170 - 110) * (mag255 - 120) / (200 - 120);
+    if (mag255 <= 50)
+        out255 = 38  * mag255 / 50;
+    else if (mag255 <= 140)
+        out255 = 38  + (110 - 38)  * (mag255 - 50)  / (140 - 50);
+    else if (mag255 <= 220)
+        out255 = 110 + (205 - 110) * (mag255 - 140) / (220 - 140);
     else
-        out255 = 170 + (205 - 170) * (mag255 - 200) / (255 - 200);
+        out255 = 205 + (255 - 205) * (mag255 - 220) / (255 - 220);
 
     int out128  = out255 * 128 / 255;
     int raw_out = 128 + sign * out128;
@@ -107,17 +107,16 @@ static uint16_t applyCurveSlow(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Aplica remeson sobre lx/ly si esta activo (empuja arriba-izquierda levemente)
+// [SQUARE MODE] - Aplica remeson lateral (X) leve al presionar cuadrado
 static void applySquareBump(uint16_t &lx, uint16_t &ly) {
     if (!sq_bump_active) return;
+    // Solo eje X, pequeno empuje lateral
     int32_t x = (int32_t)lx - SQ_BUMP_OFFSET;
-    int32_t y = (int32_t)ly - SQ_BUMP_OFFSET;
     if (x < (int32_t)GAMEPAD_JOYSTICK_MIN) x = GAMEPAD_JOYSTICK_MIN;
     if (x > (int32_t)GAMEPAD_JOYSTICK_MAX) x = GAMEPAD_JOYSTICK_MAX;
-    if (y < (int32_t)GAMEPAD_JOYSTICK_MIN) y = GAMEPAD_JOYSTICK_MIN;
-    if (y > (int32_t)GAMEPAD_JOYSTICK_MAX) y = GAMEPAD_JOYSTICK_MAX;
     lx = (uint16_t)x;
-    ly = (uint16_t)y;
+    // Y sin cambio
+    (void)ly;
 }
 
 // [SQUARE MODE] - Actualizar estado segun si cuadrado esta apretado
