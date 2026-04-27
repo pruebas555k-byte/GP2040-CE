@@ -74,6 +74,12 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
+// [SQUARE MODE] - Mapeo lineal puro (sin curva)
+static uint16_t applyLinear(uint8_t raw) {
+    return (uint16_t)((uint32_t)raw * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
+                      + GAMEPAD_JOYSTICK_MIN);
+}
+
 // [SQUARE MODE] - Curva lenta que llega a 255, progresion suave sin brusquedad lateral
 static uint16_t applyCurveSlow(uint8_t raw) {
     int offset = (int)raw - 128;
@@ -308,8 +314,8 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
-                    _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
+                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
+                    _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
@@ -438,8 +444,8 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
-                    _controller_host_state.ly = applyCurveSlow(controller_report.leftStickY);
+                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
+                    _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
