@@ -74,6 +74,38 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
+// Curva stick derecho EAFC - arranque agresivo para registrar regates rapidos con toque corto
+static uint16_t applyCurveRight(uint8_t raw) {
+    int offset = (int)raw - 128;
+    int sign   = (offset >= 0) ? 1 : -1;
+    int mag    = (offset < 0) ? -offset : offset;
+
+    if (mag <= DEADZONE_RAW) {
+        return (uint16_t)GAMEPAD_JOYSTICK_MID;
+    }
+
+    int mag255 = (mag * 255 + 64) / 128;
+    if (mag255 > 255) mag255 = 255;
+
+    int out255;
+    if (mag255 <= 26)
+        out255 = 102 * mag255 / 26;
+    else if (mag255 <= 128)
+        out255 = 102 + (179 - 102) * (mag255 - 26)  / (128 - 26);
+    else if (mag255 <= 200)
+        out255 = 179 + (228 - 179) * (mag255 - 128) / (200 - 128);
+    else
+        out255 = 228 + (255 - 228) * (mag255 - 200) / (255 - 200);
+
+    int out128  = out255 * 128 / 255;
+    int raw_out = 128 + sign * out128;
+    if (raw_out < 0)   raw_out = 0;
+    if (raw_out > 255) raw_out = 255;
+
+    return (uint16_t)((uint32_t)raw_out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
+                      + GAMEPAD_JOYSTICK_MIN);
+}
+
 // [SQUARE MODE] - Mapeo lineal puro (sin curva)
 static uint16_t applyLinear(uint8_t raw) {
     return (uint16_t)((uint32_t)raw * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
@@ -314,15 +346,15 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
+                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
                 }
-                _controller_host_state.rx = applyCurve(controller_report.rightStickX);
-                _controller_host_state.ry = applyCurve(controller_report.rightStickY);
+                _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+                _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
@@ -444,15 +476,15 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                 updateSquareMode(controller_report.buttonWest);
 
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
+                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
                     _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
                 }
-                _controller_host_state.rx = applyCurve(controller_report.rightStickX);
-                _controller_host_state.ry = applyCurve(controller_report.rightStickY);
+                _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+                _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
