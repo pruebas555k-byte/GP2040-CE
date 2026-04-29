@@ -42,7 +42,7 @@ static uint32_t sq_bump_start  = 0;
 #define SQ_BUMP_MS     50
 #define SQ_BUMP_OFFSET 1800
 
-// Curva normal EAFC
+// Curva izquierdo EAFC (sin cuadrado)
 static uint16_t applyCurve(uint8_t raw) {
     int offset = (int)raw - 128;
     int sign   = (offset >= 0) ? 1 : -1;
@@ -74,94 +74,26 @@ static uint16_t applyCurve(uint8_t raw) {
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// Curva stick derecho EAFC - arranque agresivo para registrar regates rapidos con toque corto
-static uint16_t applyCurveRight(uint8_t raw) {
-    int offset = (int)raw - 128;
-    int sign   = (offset >= 0) ? 1 : -1;
-    int mag    = (offset < 0) ? -offset : offset;
-
-    if (mag <= DEADZONE_RAW) {
-        return (uint16_t)GAMEPAD_JOYSTICK_MID;
-    }
-
-    int mag255 = (mag * 255 + 64) / 128;
-    if (mag255 > 255) mag255 = 255;
-
-    int out255;
-    if (mag255 <= 26)
-        out255 = 102 * mag255 / 26;
-    else if (mag255 <= 128)
-        out255 = 102 + (179 - 102) * (mag255 - 26)  / (128 - 26);
-    else if (mag255 <= 200)
-        out255 = 179 + (228 - 179) * (mag255 - 128) / (200 - 128);
-    else
-        out255 = 228 + (255 - 228) * (mag255 - 200) / (255 - 200);
-
-    int out128  = out255 * 128 / 255;
-    int raw_out = 128 + sign * out128;
-    if (raw_out < 0)   raw_out = 0;
-    if (raw_out > 255) raw_out = 255;
-
-    return (uint16_t)((uint32_t)raw_out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
-                      + GAMEPAD_JOYSTICK_MIN);
-}
-
-// [SQUARE MODE] - Mapeo lineal puro (sin curva)
+// Mapeo lineal puro 1:1
 static uint16_t applyLinear(uint8_t raw) {
     return (uint16_t)((uint32_t)raw * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
                       + GAMEPAD_JOYSTICK_MIN);
 }
 
-// [SQUARE MODE] - Curva lenta que llega a 255, progresion suave sin brusquedad lateral
-static uint16_t applyCurveSlow(uint8_t raw) {
-    int offset = (int)raw - 128;
-    int sign   = (offset >= 0) ? 1 : -1;
-    int mag    = (offset < 0) ? -offset : offset;
-
-    if (mag <= DEADZONE_RAW) {
-        return (uint16_t)GAMEPAD_JOYSTICK_MID;
-    }
-
-    int mag255 = (mag * 255 + 64) / 128;
-    if (mag255 > 255) mag255 = 255;
-
-    // Inicio suave, zona media muy progresiva (no brusca en laterales), llega a 255 al full
-    int out255;
-    if (mag255 <= 50)
-        out255 = 38  * mag255 / 50;
-    else if (mag255 <= 140)
-        out255 = 38  + (110 - 38)  * (mag255 - 50)  / (140 - 50);
-    else if (mag255 <= 220)
-        out255 = 110 + (205 - 110) * (mag255 - 140) / (220 - 140);
-    else
-        out255 = 205 + (255 - 205) * (mag255 - 220) / (255 - 220);
-
-    int out128  = out255 * 128 / 255;
-    int raw_out = 128 + sign * out128;
-    if (raw_out < 0)   raw_out = 0;
-    if (raw_out > 255) raw_out = 255;
-
-    return (uint16_t)((uint32_t)raw_out * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255
-                      + GAMEPAD_JOYSTICK_MIN);
-}
-
-// [SQUARE MODE] - Aplica remeson lateral (X) leve al presionar cuadrado
+// [SQUARE MODE] - Remeson solo en eje X al presionar cuadrado
 static void applySquareBump(uint16_t &lx, uint16_t &ly) {
     if (!sq_bump_active) return;
-    // Solo eje X, pequeno empuje lateral
+    (void)ly;
     int32_t x = (int32_t)lx - SQ_BUMP_OFFSET;
     if (x < (int32_t)GAMEPAD_JOYSTICK_MIN) x = GAMEPAD_JOYSTICK_MIN;
     if (x > (int32_t)GAMEPAD_JOYSTICK_MAX) x = GAMEPAD_JOYSTICK_MAX;
     lx = (uint16_t)x;
-    // Y sin cambio
-    (void)ly;
 }
 
 // [SQUARE MODE] - Actualizar estado segun si cuadrado esta apretado
 static void updateSquareMode(bool buttonWest) {
     if (buttonWest) {
         if (!sq_was_pressed) {
-            // Flanco de bajada: activar remeson
             sq_bump_active = true;
             sq_bump_start  = getMillis();
         }
@@ -179,7 +111,6 @@ static void updateSquareMode(bool buttonWest) {
             }
         }
     }
-    // Expirar remeson
     if (sq_bump_active && getMillis() - sq_bump_start >= SQ_BUMP_MS) {
         sq_bump_active = false;
     }
@@ -342,19 +273,20 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
         if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
 
             if (current_profile == PROFILE_EAFC) {
-                // [SQUARE MODE] actualizar estado antes de calcular stick
                 updateSquareMode(controller_report.buttonWest);
 
+                // Izquierdo: curva normal, lineal al apretar cuadrado
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
+                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
                     _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
                 }
-                _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-                _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+                // Derecho: siempre lineal
+                _controller_host_state.rx = applyLinear(controller_report.rightStickX);
+                _controller_host_state.ry = applyLinear(controller_report.rightStickY);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
@@ -472,19 +404,20 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
         if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
 
             if (current_profile == PROFILE_EAFC) {
-                // [SQUARE MODE] actualizar estado antes de calcular stick
                 updateSquareMode(controller_report.buttonWest);
 
+                // Izquierdo: curva normal, lineal al apretar cuadrado
                 if (sq_mode_active) {
-                    _controller_host_state.lx = applyCurveSlow(controller_report.leftStickX);
+                    _controller_host_state.lx = applyLinear(controller_report.leftStickX);
                     _controller_host_state.ly = applyLinear(controller_report.leftStickY);
                     applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
                 } else {
                     _controller_host_state.lx = applyCurve(controller_report.leftStickX);
                     _controller_host_state.ly = applyCurve(controller_report.leftStickY);
                 }
-                _controller_host_state.rx = map(controller_report.rightStickX, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
-                _controller_host_state.ry = map(controller_report.rightStickY, 0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
+                // Derecho: siempre lineal
+                _controller_host_state.rx = applyLinear(controller_report.rightStickX);
+                _controller_host_state.ry = applyLinear(controller_report.rightStickY);
             } else {
                 _controller_host_state.lx = map(controller_report.leftStickX,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
                 _controller_host_state.ly = map(controller_report.leftStickY,  0, 255, GAMEPAD_JOYSTICK_MIN, GAMEPAD_JOYSTICK_MAX);
