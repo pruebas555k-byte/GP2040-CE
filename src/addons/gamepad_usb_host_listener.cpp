@@ -328,7 +328,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
                         square_hold_start  = getMillis();
                     }
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 253) {
+                        if (getMillis() - square_hold_start < 4700) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
@@ -459,7 +459,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
                         square_hold_start  = getMillis();
                     }
                     if (square_hold_active) {
-                        if (getMillis() - square_hold_start < 242) {
+                        if (getMillis() - square_hold_start < 1) {
                             _controller_host_state.buttons |= GAMEPAD_MASK_B3;
                         } else {
                             square_hold_active = false;
