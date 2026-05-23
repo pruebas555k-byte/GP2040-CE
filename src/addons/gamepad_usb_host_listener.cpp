@@ -132,10 +132,6 @@ static void updateSquareMode(bool buttonWest) {
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
 
-    // Perfil inicial al prender firmware.
-    current_profile = PROFILE_EAFC;
-    profile_switch_held = false;
-
 #if GAMEPAD_HOST_DEBUG
     stdio_init_all();
 #endif
@@ -166,6 +162,9 @@ void GamepadUSBHostListener::process() {
 }
 
 void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
+    (void)desc_report;
+    (void)desc_len;
+
     uint16_t vid = 0;
     uint16_t pid = 0;
 
@@ -196,7 +195,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     isDS4Identified = true;
     hasDS4DefReport = false;
 
-    // El usuario quiere que cada reinicio/reconexion arranque en EAFC.
     current_profile = PROFILE_EAFC;
     profile_switch_held = false;
 
@@ -216,36 +214,12 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_active = false;
     sq_bump_start = 0;
 
-    switch(controller_pid) {
-        // DualShock 4 v2 / Sony 0x09CC.
-        // PS4_PRODUCT_ID y DS4_PRODUCT_ID son el mismo valor, por eso solo se usa uno aqui.
-        case PS4_PRODUCT_ID:
-        case PS4_WHEEL_PRODUCT_ID:
-        case 0xB67B:
-        case 0x00EE:
-            init_ds4(desc_report, desc_len);
-            isDS4Identified = true;
-            tuh_hid_receive_report(dev_addr, instance);
-            break;
-
-        // DualShock 4 original 0x05C4.
-        case DS4_ORG_PRODUCT_ID:
-            isDS4Identified = true;
-            setup_ds4();
-            tuh_hid_receive_report(dev_addr, instance);
-            break;
-
-        // DualSense 0x0CE6.
-        // Se deja parecido al primero que funcionaba bien: init LED + receive_report,
-        // pero sin while infinito si falla el send_report.
-        case 0x0CE6:
-            init_ds5_led(dev_addr, instance);
-            break;
-
-        default:
-            tuh_hid_receive_report(dev_addr, instance);
-            break;
-    }
+    // FIX ESTABILIDAD:
+    // No llamar init_ds5_led() aqui.
+    // No llamar init_ds4() aqui.
+    // Evitamos send_report/get_report durante mount porque puede colgar algunos DS4/DS5/clones.
+    // Solo iniciamos recepcion HID.
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 void GamepadUSBHostListener::xmount(uint8_t dev_addr, uint8_t instance, uint8_t controllerType, uint8_t subtype) {
@@ -300,42 +274,14 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    uint8_t buf[47];
+    (void)dev_addr;
+    (void)instance;
 
-    memset(buf, 0, sizeof(buf));
-
-    buf[1] = 0x14;
-    buf[38] = 0x02;
-    buf[41] = 0x01;
-    buf[42] = 0x02;
-    buf[43] = 0x04;
-
-    buf[44] = LED_DEFAULT_R;
-    buf[45] = LED_DEFAULT_G;
-    buf[46] = LED_DEFAULT_B;
-
-    // Version segura: intentar una vez. Si falla, fallback una vez.
-    // No usar while infinito porque puede tumbar/congelar el host USB.
-    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, sizeof(buf))) {
-        uint8_t buf2[48];
-
-        memset(buf2, 0, sizeof(buf2));
-
-        buf2[0] = 0x02;
-        buf2[2] = 0x14;
-        buf2[39] = 0x02;
-        buf2[42] = 0x01;
-        buf2[43] = 0x02;
-        buf2[44] = 0x04;
-
-        buf2[45] = LED_DEFAULT_R;
-        buf2[46] = LED_DEFAULT_G;
-        buf2[47] = LED_DEFAULT_B;
-
-        tuh_hid_send_report(dev_addr, instance, 0, buf2, sizeof(buf2));
-    }
-
-    tuh_hid_receive_report(dev_addr, instance);
+    // FIX ESTABILIDAD:
+    // Desactivado. La version anterior podia quedarse en while infinito:
+    // while (!tuh_hid_send_report(...)) { tuh_task(); }
+    // El DualSense puede leer inputs sin mandar reporte LED.
+    return;
 }
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
@@ -345,12 +291,15 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
+    if (itf_protocol != HID_ITF_PROTOCOL_KEYBOARD) {
+        process_ctrlr_report(dev_addr, report, len);
+    }
 
-    process_ctrlr_report(dev_addr, report, len);
-
-    // No rearmar tuh_hid_receive_report() aqui.
-    // El firmware/manager USB ya lo maneja, y rearmarlo dos veces puede causar microcortes.
+    // FIX ESTABILIDAD:
+    // Re-armar siempre la siguiente lectura HID despues de procesar el reporte actual.
+    if (_controller_host_enabled && dev_addr == _controller_dev_addr && instance == _controller_instance) {
+        tuh_hid_receive_report(dev_addr, instance);
+    }
 }
 
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
