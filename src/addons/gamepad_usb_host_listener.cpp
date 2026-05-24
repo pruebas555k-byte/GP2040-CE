@@ -13,6 +13,11 @@
 #define LED_DEFAULT_G 0x00
 #define LED_DEFAULT_B 0xFF
 
+#define DUALSENSE_PRODUCT_ID 0x0CE6
+#define DUALSENSE_EDGE_PRODUCT_ID 0x0DF2
+
+static uint32_t hid_receive_watchdog_timer = 0;
+
 enum Profile {
     PROFILE_EAFC,
     PROFILE_WARZONE
@@ -159,6 +164,14 @@ void GamepadUSBHostListener::process() {
     gamepad->state.rt = _controller_host_state.rt;
     gamepad->state.lt = _controller_host_state.lt;
 
+    // Watchdog suave para HID host:
+    // Si por cualquier razon no quedo armada la lectura, la reintentamos.
+    // Si ya hay una lectura pendiente, TinyUSB simplemente devuelve false y no pasa nada.
+    if (_controller_host_enabled && getMillis() - hid_receive_watchdog_timer > 100) {
+        tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
+        hid_receive_watchdog_timer = getMillis();
+    }
+
     if (_controller_host_enabled && getMillis() > _next_update) {
         update_ctrlr();
         _next_update = getMillis() + GAMEPAD_HOST_POLL_INTERVAL_MS;
@@ -216,6 +229,8 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_active = false;
     sq_bump_start = 0;
 
+    hid_receive_watchdog_timer = 0;
+
     switch(controller_pid) {
         // DualShock 4 v2 / Sony 0x09CC.
         // PS4_PRODUCT_ID y DS4_PRODUCT_ID son el mismo valor, por eso solo se usa uno aqui.
@@ -235,10 +250,11 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
             tuh_hid_receive_report(dev_addr, instance);
             break;
 
-        // DualSense 0x0CE6.
-        // Se deja parecido al primero que funcionaba bien: init LED + receive_report,
-        // pero sin while infinito si falla el send_report.
-        case 0x0CE6:
+        // DualSense 0x0CE6 / DualSense Edge 0x0DF2.
+        // Mantener la ruta que encendia y hacia funcionar el DualSense:
+        // output report + lectura HID.
+        case DUALSENSE_PRODUCT_ID:
+        case DUALSENSE_EDGE_PRODUCT_ID:
             init_ds5_led(dev_addr, instance);
             break;
 
@@ -297,13 +313,15 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     sq_release_time = 0;
     sq_bump_active = false;
     sq_bump_start = 0;
+
+    hid_receive_watchdog_timer = 0;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    // Ruta DualSense restaurada como el primer codigo que si leia DS5:
-    // output report 0x02 de 47 bytes + fallback 48 bytes.
-    // La unica diferencia segura: el fallback tiene timeout, no while infinito.
+    // DualSense necesita este output report para empezar bien por USB.
+    // Importante: no usar while infinito.
     uint8_t buf[47];
+    bool send_ok = false;
 
     memset(buf, 0, sizeof(buf));
 
@@ -317,7 +335,9 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[45] = LED_DEFAULT_G;
     buf[46] = LED_DEFAULT_B;
 
-    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
+    send_ok = tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47);
+
+    if (!send_ok) {
         uint8_t buf2[48];
 
         memset(buf2, 0, sizeof(buf2));
@@ -333,18 +353,24 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         buf2[46] = LED_DEFAULT_G;
         buf2[47] = LED_DEFAULT_B;
 
-        // Antes esto era while infinito.
-        // Si el mando no acepta el reporte, salimos en 100 ms para evitar cuelgue/reset.
-        uint32_t timeout = getMillis() + 100;
-        while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
+        uint32_t start = getMillis();
+
+        while (getMillis() - start < 500) {
             tuh_task();
-            if (getMillis() >= timeout) {
+
+            if (tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
+                send_ok = true;
                 break;
             }
         }
     }
 
-    tuh_hid_receive_report(dev_addr, instance);
+    // Si no se pudo mandar el output report, igual intentamos leer.
+    // Si si se pudo mandar, set_report_complete() tambien armara la lectura
+    // cuando termine el envio, que es mas seguro para DualSense.
+    if (!send_ok) {
+        tuh_hid_receive_report(dev_addr, instance);
+    }
 }
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
@@ -354,12 +380,13 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
+    if (itf_protocol != HID_ITF_PROTOCOL_KEYBOARD) {
+        process_ctrlr_report(dev_addr, report, len);
+    }
 
-    process_ctrlr_report(dev_addr, report, len);
-
-    // Igual que la ruta que funcionaba con DualSense:
-    // no rearmar aqui para evitar doble receive_report y microcortes.
+    // Re-armar lectura despues de cada reporte.
+    // Esto evita que DualSense encienda luz pero el RP no reciba botones.
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
@@ -382,8 +409,9 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
             process_ds4(report, len);
             break;
 
-        // DualSense 0x0CE6
-        case 0x0CE6:
+        // DualSense 0x0CE6 / DualSense Edge 0x0DF2
+        case DUALSENSE_PRODUCT_ID:
+        case DUALSENSE_EDGE_PRODUCT_ID:
             process_ds(report, len);
             break;
 
@@ -824,6 +852,13 @@ bool GamepadUSBHostListener::host_set_report(uint8_t report_id, void* report, ui
 
 void GamepadUSBHostListener::set_report_complete(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t) {
     awaiting_cb = false;
+
+    // En DualSense, despues del output report, arrancar lectura HID.
+    // Esto arregla el caso: prende luz, pero el RP no recibe inputs.
+    if (_controller_host_enabled &&
+        (controller_pid == DUALSENSE_PRODUCT_ID || controller_pid == DUALSENSE_EDGE_PRODUCT_ID)) {
+        tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
+    }
 }
 
 void GamepadUSBHostListener::get_report_complete(uint8_t, uint8_t, uint8_t report_id, uint8_t, uint16_t) {
