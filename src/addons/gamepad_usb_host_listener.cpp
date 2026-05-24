@@ -211,9 +211,14 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_start = 0;
 
     // FIX ESTABILIDAD:
-    // No mandar reportes extra al mando en mount().
-    // Solo iniciar lectura HID para DS4, DS5 y compatibles.
-    tuh_hid_receive_report(dev_addr, instance);
+    // DS4: solo iniciar lectura HID.
+    // DualSense: necesita un init USB minimo para comenzar a mandar reportes.
+    // Ese init es sin luces visibles y sin bucles bloqueantes.
+    if (controller_pid == 0x0CE6) {
+        init_ds5_led(dev_addr, instance);
+    } else {
+        tuh_hid_receive_report(dev_addr, instance);
+    }
 }
 
 void GamepadUSBHostListener::xmount(uint8_t dev_addr, uint8_t instance, uint8_t controllerType, uint8_t subtype) {
@@ -268,11 +273,30 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    (void)dev_addr;
-    (void)instance;
+    // El nombre de la funcion queda porque esta declarado en el .h,
+    // pero aqui NO usamos colores ni bucles.
+    // Esto es solo el init USB minimo que el DualSense necesita para empezar a reportar.
+    uint8_t buf[47];
 
-    // Funcion vacia a proposito:
-    // no se manda ningun reporte extra al mando.
+    memset(buf, 0, sizeof(buf));
+
+    // Mantener el mismo tipo de output report que hacia funcionar el DualSense,
+    // pero con valores de luz en 0 para no encender/modificar colores.
+    buf[1] = 0x14;
+    buf[38] = 0x02;
+
+    // Sin patron visible y sin RGB.
+    buf[41] = 0x00;
+    buf[42] = 0x00;
+    buf[43] = 0x00;
+    buf[44] = 0x00;
+    buf[45] = 0x00;
+    buf[46] = 0x00;
+
+    // No hacer while. Si falla, igual seguimos con la lectura HID.
+    tuh_hid_send_report(dev_addr, instance, 0x02, buf, sizeof(buf));
+
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
