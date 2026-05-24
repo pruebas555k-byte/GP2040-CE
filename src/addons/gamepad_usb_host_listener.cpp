@@ -9,6 +9,10 @@
 
 #define ANTI_RECOIL_STRENGTH 2600
 
+#define LED_DEFAULT_R 0x00
+#define LED_DEFAULT_G 0x00
+#define LED_DEFAULT_B 0xFF
+
 enum Profile {
     PROFILE_EAFC,
     PROFILE_WARZONE
@@ -128,6 +132,10 @@ static void updateSquareMode(bool buttonWest) {
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
 
+    // Perfil inicial al prender firmware.
+    current_profile = PROFILE_EAFC;
+    profile_switch_held = false;
+
 #if GAMEPAD_HOST_DEBUG
     stdio_init_all();
 #endif
@@ -158,9 +166,6 @@ void GamepadUSBHostListener::process() {
 }
 
 void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
-    (void)desc_report;
-    (void)desc_len;
-
     uint16_t vid = 0;
     uint16_t pid = 0;
 
@@ -191,6 +196,7 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     isDS4Identified = true;
     hasDS4DefReport = false;
 
+    // El usuario quiere que cada reinicio/reconexion arranque en EAFC.
     current_profile = PROFILE_EAFC;
     profile_switch_held = false;
 
@@ -210,14 +216,35 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_active = false;
     sq_bump_start = 0;
 
-    // FIX ESTABILIDAD:
-    // DS4: solo iniciar lectura HID.
-    // DualSense: necesita un init USB minimo para comenzar a mandar reportes.
-    // Ese init es sin luces visibles y sin bucles bloqueantes.
-    if (controller_pid == 0x0CE6) {
-        init_ds5_led(dev_addr, instance);
-    } else {
-        tuh_hid_receive_report(dev_addr, instance);
+    switch(controller_pid) {
+        // DualShock 4 v2 / Sony 0x09CC.
+        // PS4_PRODUCT_ID y DS4_PRODUCT_ID son el mismo valor, por eso solo se usa uno aqui.
+        case PS4_PRODUCT_ID:
+        case PS4_WHEEL_PRODUCT_ID:
+        case 0xB67B:
+        case 0x00EE:
+            init_ds4(desc_report, desc_len);
+            isDS4Identified = true;
+            tuh_hid_receive_report(dev_addr, instance);
+            break;
+
+        // DualShock 4 original 0x05C4.
+        case DS4_ORG_PRODUCT_ID:
+            isDS4Identified = true;
+            setup_ds4();
+            tuh_hid_receive_report(dev_addr, instance);
+            break;
+
+        // DualSense 0x0CE6.
+        // Se deja parecido al primero que funcionaba bien: init LED + receive_report,
+        // pero sin while infinito si falla el send_report.
+        case 0x0CE6:
+            init_ds5_led(dev_addr, instance);
+            break;
+
+        default:
+            tuh_hid_receive_report(dev_addr, instance);
+            break;
     }
 }
 
@@ -273,28 +300,49 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
-    // El nombre de la funcion queda porque esta declarado en el .h,
-    // pero aqui NO usamos colores ni bucles.
-    // Esto es solo el init USB minimo que el DualSense necesita para empezar a reportar.
+    // Ruta DualSense restaurada como el primer codigo que si leia DS5:
+    // output report 0x02 de 47 bytes + fallback 48 bytes.
+    // La unica diferencia segura: el fallback tiene timeout, no while infinito.
     uint8_t buf[47];
 
     memset(buf, 0, sizeof(buf));
 
-    // Mantener el mismo tipo de output report que hacia funcionar el DualSense,
-    // pero con valores de luz en 0 para no encender/modificar colores.
     buf[1] = 0x14;
     buf[38] = 0x02;
+    buf[41] = 0x01;
+    buf[42] = 0x02;
+    buf[43] = 0x04;
 
-    // Sin patron visible y sin RGB.
-    buf[41] = 0x00;
-    buf[42] = 0x00;
-    buf[43] = 0x00;
-    buf[44] = 0x00;
-    buf[45] = 0x00;
-    buf[46] = 0x00;
+    buf[44] = LED_DEFAULT_R;
+    buf[45] = LED_DEFAULT_G;
+    buf[46] = LED_DEFAULT_B;
 
-    // No hacer while. Si falla, igual seguimos con la lectura HID.
-    tuh_hid_send_report(dev_addr, instance, 0x02, buf, sizeof(buf));
+    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
+        uint8_t buf2[48];
+
+        memset(buf2, 0, sizeof(buf2));
+
+        buf2[0] = 0x02;
+        buf2[2] = 0x14;
+        buf2[39] = 0x02;
+        buf2[42] = 0x01;
+        buf2[43] = 0x02;
+        buf2[44] = 0x04;
+
+        buf2[45] = LED_DEFAULT_R;
+        buf2[46] = LED_DEFAULT_G;
+        buf2[47] = LED_DEFAULT_B;
+
+        // Antes esto era while infinito.
+        // Si el mando no acepta el reporte, salimos en 100 ms para evitar cuelgue/reset.
+        uint32_t timeout = getMillis() + 100;
+        while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
+            tuh_task();
+            if (getMillis() >= timeout) {
+                break;
+            }
+        }
+    }
 
     tuh_hid_receive_report(dev_addr, instance);
 }
@@ -306,15 +354,12 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
-    if (itf_protocol != HID_ITF_PROTOCOL_KEYBOARD) {
-        process_ctrlr_report(dev_addr, report, len);
-    }
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
 
-    // FIX ESTABILIDAD:
-    // Re-armar siempre la siguiente lectura HID despues de procesar el reporte actual.
-    if (_controller_host_enabled && dev_addr == _controller_dev_addr && instance == _controller_instance) {
-        tuh_hid_receive_report(dev_addr, instance);
-    }
+    process_ctrlr_report(dev_addr, report, len);
+
+    // Igual que la ruta que funcionaba con DualSense:
+    // no rearmar aqui para evitar doble receive_report y microcortes.
 }
 
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
@@ -811,8 +856,7 @@ bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const*
 }
 
 void GamepadUSBHostListener::setup_ds4() {
-    // FIX ESTABILIDAD:
-    // No bloquear DS4 si no llega el feature report.
+    // DS4 no debe quedar bloqueado esperando definition report.
     isDS4Identified = true;
     hasDS4DefReport = false;
 }
@@ -821,9 +865,9 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
     (void)descReport;
     (void)descLen;
 
-    // FIX ESTABILIDAD:
-    // No hacemos host_get_report durante mount.
-    // Ese control transfer puede dejar inestable el host en algunos DS4/clones.
+    // DS4 estable:
+    // No hacer host_get_report durante mount.
+    // En algunos DS4/clones ese control transfer causa microcortes o reenumeracion.
     isDS4Identified = true;
     hasDS4DefReport = false;
 }
