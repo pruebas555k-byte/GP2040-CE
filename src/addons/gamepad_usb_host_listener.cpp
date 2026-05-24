@@ -167,7 +167,7 @@ void GamepadUSBHostListener::process() {
     // Watchdog suave:
     // Si por alguna razon la lectura HID no quedo armada, se reintenta.
     // Si ya habia una lectura pendiente, TinyUSB devuelve false y no afecta.
-    if (_controller_host_enabled && (getMillis() - last_hid_report_time > 250)) {
+    if (_controller_host_enabled && (getMillis() - last_hid_report_time > 1000)) {
         tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
         last_hid_report_time = getMillis();
     }
@@ -595,24 +595,20 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report == nullptr || len < 1) return;
 
+    // FIX IMPORTANTE:
+    // DualSense USB debe entrar alineado con report ID 0x01.
+    // El fallback "sin report ID" desfasaba todos los bytes:
+    // analogos raros y botones fantasma/todos apretados.
+    if (report[0] != 1) return;
+    if (len < sizeof(DSReport)) return;
+
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
 
     memset(&controller_report, 0, sizeof(controller_report));
-
-    // DualSense puede llegar con report ID 0x01 incluido,
-    // o en algunos stacks puede llegar sin ese byte inicial.
-    if (report[0] == 1 && len >= sizeof(DSReport)) {
-        memcpy(&controller_report, report, sizeof(controller_report));
-    } else if (len >= sizeof(DSReport) - 1) {
-        controller_report.reportID = 1;
-        memcpy(((uint8_t*)&controller_report) + 1, report, sizeof(controller_report) - 1);
-    } else {
-        return;
-    }
+    memcpy(&controller_report, report, sizeof(controller_report));
 
     // Procesar siempre cada reporte valido.
-    // No depender solo de reportCounter, porque si el layout varia puede quedar sin actualizar.
     {
         if (current_profile == PROFILE_EAFC) {
             updateSquareMode(controller_report.buttonWest);
