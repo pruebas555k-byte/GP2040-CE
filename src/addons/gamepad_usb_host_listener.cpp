@@ -319,7 +319,6 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     // DualSense necesita este output report para empezar bien por USB.
-    // Importante: no usar while infinito.
     uint8_t buf[47];
     bool send_ok = false;
 
@@ -365,12 +364,11 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         }
     }
 
-    // Si no se pudo mandar el output report, igual intentamos leer.
-    // Si si se pudo mandar, set_report_complete() tambien armara la lectura
-    // cuando termine el envio, que es mas seguro para DualSense.
-    if (!send_ok) {
-        tuh_hid_receive_report(dev_addr, instance);
-    }
+    // FIX DUALSENSE: siempre armar la lectura HID al montar,
+    // independientemente de si el output report se envio o no.
+    // set_report_complete tambien la rearmara si el envio tuvo exito,
+    // pero llamarla aqui garantiza que nunca quede sin lectura pendiente.
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
@@ -385,7 +383,6 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
     }
 
     // Re-armar lectura despues de cada reporte.
-    // Esto evita que DualSense encienda luz pero el RP no reciba botones.
     tuh_hid_receive_report(dev_addr, instance);
 }
 
@@ -637,7 +634,14 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     memset(&controller_report, 0, sizeof(controller_report));
     memcpy(&controller_report, report, sizeof(controller_report));
 
-    if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
+    // FIX DUALSENSE: no confiar en reportCounter para detectar cambios.
+    // El campo puede no alinear correctamente segun la estructura DSReport,
+    // o puede no cambiar en algunos reportes. Usar memcmp igual que DS4
+    // usa diff_report, y ademas forzar siempre el procesamiento para
+    // garantizar que los inputs del DualSense nunca se pierdan.
+    bool ds_changed = (memcmp(&prev_ds_report, &controller_report, sizeof(DSReport)) != 0);
+
+    if (ds_changed || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
         if (current_profile == PROFILE_EAFC) {
             updateSquareMode(controller_report.buttonWest);
 
@@ -853,10 +857,10 @@ bool GamepadUSBHostListener::host_set_report(uint8_t report_id, void* report, ui
 void GamepadUSBHostListener::set_report_complete(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t) {
     awaiting_cb = false;
 
-    // En DualSense, despues del output report, arrancar lectura HID.
-    // Esto arregla el caso: prende luz, pero el RP no recibe inputs.
-    if (_controller_host_enabled &&
-        (controller_pid == DUALSENSE_PRODUCT_ID || controller_pid == DUALSENSE_EDGE_PRODUCT_ID)) {
+    // FIX DUALSENSE: rearmar lectura HID siempre que haya un controller conectado.
+    // Antes solo se hacia para DualSense, pero llamarlo incondicionalmente es mas
+    // robusto. Si ya hay una lectura pendiente, TinyUSB devuelve false sin romper nada.
+    if (_controller_host_enabled) {
         tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
     }
 }
