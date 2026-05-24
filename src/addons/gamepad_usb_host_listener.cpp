@@ -13,6 +13,9 @@
 #define LED_DEFAULT_G 0x00
 #define LED_DEFAULT_B 0xFF
 
+#define DUALSENSE_PRODUCT_ID 0x0CE6
+#define DUALSENSE_EDGE_PRODUCT_ID 0x0DF2
+
 enum Profile {
     PROFILE_EAFC,
     PROFILE_WARZONE
@@ -20,6 +23,8 @@ enum Profile {
 
 static Profile current_profile = PROFILE_EAFC;
 static bool profile_switch_held = false;
+
+static uint32_t last_hid_report_time = 0;
 
 static bool macro_mute_active = false;
 static uint32_t macro_mute_start_time = 0;
@@ -159,6 +164,14 @@ void GamepadUSBHostListener::process() {
     gamepad->state.rt = _controller_host_state.rt;
     gamepad->state.lt = _controller_host_state.lt;
 
+    // Watchdog suave:
+    // Si por alguna razon la lectura HID no quedo armada, se reintenta.
+    // Si ya habia una lectura pendiente, TinyUSB devuelve false y no afecta.
+    if (_controller_host_enabled && (getMillis() - last_hid_report_time > 250)) {
+        tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
+        last_hid_report_time = getMillis();
+    }
+
     if (_controller_host_enabled && getMillis() > _next_update) {
         update_ctrlr();
         _next_update = getMillis() + GAMEPAD_HOST_POLL_INTERVAL_MS;
@@ -219,10 +232,11 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_active = false;
     sq_bump_start = 0;
 
-    // Base antes de meter DualShock:
-    // DualSense 0x0CE6 usa el init que lo hacia funcionar.
-    // Otros mandos solo arrancan lectura generica, sin init DS4.
-    if (controller_pid == 0x0CE6) {
+    last_hid_report_time = getMillis();
+
+    // DualSense necesita init/output report para empezar bien.
+    // DualShock no necesita get_report aqui; solo lectura HID.
+    if (controller_pid == DUALSENSE_PRODUCT_ID || controller_pid == DUALSENSE_EDGE_PRODUCT_ID) {
         init_ds5_led(dev_addr, instance);
     } else {
         tuh_hid_receive_report(dev_addr, instance);
@@ -278,9 +292,13 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     sq_release_time = 0;
     sq_bump_active = false;
     sq_bump_start = 0;
+
+    last_hid_report_time = 0;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
+    // DualSense necesita este output report para empezar a mandar inputs por USB.
+    // Se mantiene la ruta del codigo que prendia el DualSense, pero sin while infinito.
     uint8_t buf[47];
 
     memset(buf, 0, sizeof(buf));
@@ -295,9 +313,9 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[45] = LED_DEFAULT_G;
     buf[46] = LED_DEFAULT_B;
 
-    // Version segura: intentar una vez. Si falla, fallback una vez.
-    // No usar while infinito porque puede tumbar/congelar el host USB.
-    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, sizeof(buf))) {
+    bool sent = tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47);
+
+    if (!sent) {
         uint8_t buf2[48];
 
         memset(buf2, 0, sizeof(buf2));
@@ -313,9 +331,20 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         buf2[46] = LED_DEFAULT_G;
         buf2[47] = LED_DEFAULT_B;
 
-        tuh_hid_send_report(dev_addr, instance, 0, buf2, sizeof(buf2));
+        // Reintentar un poco, pero nunca infinito.
+        uint32_t start = getMillis();
+        while (getMillis() - start < 120) {
+            tuh_task();
+
+            if (tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
+                sent = true;
+                break;
+            }
+        }
     }
 
+    // Arrancar lectura. Si el envio aun esta ocupado, set_report_complete()
+    // tambien volvera a armar lectura cuando termine.
     tuh_hid_receive_report(dev_addr, instance);
 }
 
@@ -326,12 +355,14 @@ void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance,
 
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
+    if (itf_protocol != HID_ITF_PROTOCOL_KEYBOARD) {
+        last_hid_report_time = getMillis();
+        process_ctrlr_report(dev_addr, report, len);
+    }
 
-    process_ctrlr_report(dev_addr, report, len);
-
-    // No rearmar tuh_hid_receive_report() aqui.
-    // El firmware/manager USB ya lo maneja, y rearmarlo dos veces puede causar microcortes.
+    // Esto es CLAVE para DualSense:
+    // despues de cada reporte hay que pedir el siguiente.
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
@@ -339,11 +370,17 @@ void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t cons
 
     if (report == nullptr || len < 1) return;
 
-    // Base antes de meter DualShock:
-    // DualSense y default van por process_ds().
-    // No forzamos DS4 a process_ds4().
     switch(controller_pid) {
-        case 0x0CE6:
+        case DS4_ORG_PRODUCT_ID:
+        case DS4_PRODUCT_ID:
+        case PS4_WHEEL_PRODUCT_ID:
+        case 0xB67B:
+        case 0x00EE:
+            process_ds4(report, len);
+            break;
+
+        case DUALSENSE_PRODUCT_ID:
+        case DUALSENSE_EDGE_PRODUCT_ID:
             process_ds(report, len);
             break;
 
@@ -367,7 +404,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     memset(&controller_report, 0, sizeof(controller_report));
     memcpy(&controller_report, report, sizeof(controller_report));
 
-    if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
+    {
         if (current_profile == PROFILE_EAFC) {
             updateSquareMode(controller_report.buttonWest);
 
@@ -558,18 +595,25 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     if (report == nullptr || len < 1) return;
 
-    uint8_t const report_id = report[0];
-
-    if (report_id != 1) return;
-    if (len < sizeof(DSReport)) return;
-
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
 
     memset(&controller_report, 0, sizeof(controller_report));
-    memcpy(&controller_report, report, sizeof(controller_report));
 
-    if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
+    // DualSense puede llegar con report ID 0x01 incluido,
+    // o en algunos stacks puede llegar sin ese byte inicial.
+    if (report[0] == 1 && len >= sizeof(DSReport)) {
+        memcpy(&controller_report, report, sizeof(controller_report));
+    } else if (len >= sizeof(DSReport) - 1) {
+        controller_report.reportID = 1;
+        memcpy(((uint8_t*)&controller_report) + 1, report, sizeof(controller_report) - 1);
+    } else {
+        return;
+    }
+
+    // Procesar siempre cada reporte valido.
+    // No depender solo de reportCounter, porque si el layout varia puede quedar sin actualizar.
+    {
         if (current_profile == PROFILE_EAFC) {
             updateSquareMode(controller_report.buttonWest);
 
@@ -759,7 +803,13 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 }
 
 void GamepadUSBHostListener::update_ctrlr() {
-    // Base DualSense-only: no update especial DS4.
+    if (controller_pid == DS4_ORG_PRODUCT_ID ||
+        controller_pid == DS4_PRODUCT_ID ||
+        controller_pid == PS4_WHEEL_PRODUCT_ID ||
+        controller_pid == 0xB67B ||
+        controller_pid == 0x00EE) {
+        update_ds4();
+    }
 }
 
 void GamepadUSBHostListener::update_ds4() {
@@ -777,6 +827,11 @@ bool GamepadUSBHostListener::host_set_report(uint8_t report_id, void* report, ui
 
 void GamepadUSBHostListener::set_report_complete(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t) {
     awaiting_cb = false;
+
+    if (_controller_host_enabled &&
+        (controller_pid == DUALSENSE_PRODUCT_ID || controller_pid == DUALSENSE_EDGE_PRODUCT_ID)) {
+        tuh_hid_receive_report(_controller_dev_addr, _controller_instance);
+    }
 }
 
 void GamepadUSBHostListener::get_report_complete(uint8_t, uint8_t, uint8_t report_id, uint8_t, uint16_t) {
@@ -809,8 +864,7 @@ bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const*
 }
 
 void GamepadUSBHostListener::setup_ds4() {
-    // Base DualSense-only: DS4 no se inicializa aqui.
-    isDS4Identified = false;
+    isDS4Identified = true;
     hasDS4DefReport = false;
 }
 
@@ -818,7 +872,7 @@ void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLe
     (void)descReport;
     (void)descLen;
 
-    // Base DualSense-only: no pedir reportes DS4.
-    isDS4Identified = false;
+    // No pedir feature reports DS4 en mount para evitar microcortes.
+    isDS4Identified = true;
     hasDS4DefReport = false;
 }
