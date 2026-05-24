@@ -132,6 +132,10 @@ static void updateSquareMode(bool buttonWest) {
 void GamepadUSBHostListener::setup() {
     _controller_host_enabled = false;
 
+    // Perfil inicial al prender firmware.
+    current_profile = PROFILE_EAFC;
+    profile_switch_held = false;
+
 #if GAMEPAD_HOST_DEBUG
     stdio_init_all();
 #endif
@@ -162,6 +166,9 @@ void GamepadUSBHostListener::process() {
 }
 
 void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
+    (void)desc_report;
+    (void)desc_len;
+
     uint16_t vid = 0;
     uint16_t pid = 0;
 
@@ -189,10 +196,12 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
 
     _controller_host_analog = true;
 
-    isDS4Identified = true;
+    isDS4Identified = false;
     hasDS4DefReport = false;
 
+    // Como el primer codigo: cada montaje/reconexion arranca en EAFC.
     current_profile = PROFILE_EAFC;
+    profile_switch_held = false;
 
     macro_mute_active = false;
     macro_mute_start_time = 0;
@@ -210,46 +219,26 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     sq_bump_active = false;
     sq_bump_start = 0;
 
-    switch(controller_pid) {
-        // DualShock 4 v2 / Sony 0x09CC
-        // OJO: PS4_PRODUCT_ID y DS4_PRODUCT_ID son el mismo 0x09CC.
-        // No se ponen juntos para evitar duplicate case.
-        case PS4_PRODUCT_ID:
-        case PS4_WHEEL_PRODUCT_ID:
-        case 0xB67B:
-        case 0x00EE:
-            init_ds4(desc_report, desc_len);
-
-            // FIX:
-            // init_ds4 antes dejaba isDS4Identified=false.
-            // Si el feature report no respondia, el mando quedaba montado pero sin leer inputs.
-            isDS4Identified = true;
-            break;
-
-        // DualShock 4 original 0x05C4
-        case DS4_ORG_PRODUCT_ID:
-            isDS4Identified = true;
-            setup_ds4();
-            isDS4Identified = true;
-            break;
-
-        // DualSense 0x0CE6
-        case 0x0CE6:
-            // FIX:
-            // Esto antes se mandaba a todos los controles.
-            // Ahora solo se manda al DualSense.
-            init_ds5_led(dev_addr, instance);
-            break;
-
-        default:
-            break;
+    // Base antes de meter DualShock:
+    // DualSense 0x0CE6 usa el init que lo hacia funcionar.
+    // Otros mandos solo arrancan lectura generica, sin init DS4.
+    if (controller_pid == 0x0CE6) {
+        init_ds5_led(dev_addr, instance);
+    } else {
+        tuh_hid_receive_report(dev_addr, instance);
     }
 }
 
 void GamepadUSBHostListener::xmount(uint8_t dev_addr, uint8_t instance, uint8_t controllerType, uint8_t subtype) {
+    (void)dev_addr;
+    (void)instance;
+    (void)controllerType;
+    (void)subtype;
 }
 
 void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
+    (void)dev_addr;
+
     _controller_host_enabled = false;
 
     controller_pid = 0x00;
@@ -259,18 +248,36 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     _controller_instance = 0;
     _controller_type = 0;
 
+    uint16_t joystick_mid = GAMEPAD_JOYSTICK_MID;
+
+    _controller_host_state.lx = joystick_mid;
+    _controller_host_state.ly = joystick_mid;
+    _controller_host_state.rx = joystick_mid;
+    _controller_host_state.ry = joystick_mid;
+
+    _controller_host_state.lt = 0;
+    _controller_host_state.rt = 0;
+    _controller_host_state.buttons = 0;
+    _controller_host_state.dpad = 0;
+
     isDS4Identified = false;
     hasDS4DefReport = false;
 
     macro_mute_active = false;
+    macro_mute_start_time = 0;
+
+    turbo_timer = 0;
     turbo_state = false;
+
     square_hold_active = false;
     square_locked = false;
+    square_hold_start = 0;
 
     sq_mode_active = false;
     sq_was_pressed = false;
     sq_release_time = 0;
     sq_bump_active = false;
+    sq_bump_start = 0;
 }
 
 void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
@@ -288,7 +295,9 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
     buf[45] = LED_DEFAULT_G;
     buf[46] = LED_DEFAULT_B;
 
-    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, 47)) {
+    // Version segura: intentar una vez. Si falla, fallback una vez.
+    // No usar while infinito porque puede tumbar/congelar el host USB.
+    if (!tuh_hid_send_report(dev_addr, instance, 0x02, buf, sizeof(buf))) {
         uint8_t buf2[48];
 
         memset(buf2, 0, sizeof(buf2));
@@ -304,9 +313,7 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
         buf2[46] = LED_DEFAULT_G;
         buf2[47] = LED_DEFAULT_B;
 
-        while (!tuh_hid_send_report(dev_addr, instance, 0, buf2, 48)) {
-            tuh_task();
-        }
+        tuh_hid_send_report(dev_addr, instance, 0, buf2, sizeof(buf2));
     }
 
     tuh_hid_receive_report(dev_addr, instance);
@@ -314,36 +321,28 @@ void GamepadUSBHostListener::init_ds5_led(uint8_t dev_addr, uint8_t instance) {
 
 void GamepadUSBHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     if (_controller_host_enabled == false) return;
+    if (dev_addr != _controller_dev_addr) return;
+    if (instance != _controller_instance) return;
 
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) return;
 
     process_ctrlr_report(dev_addr, report, len);
+
+    // No rearmar tuh_hid_receive_report() aqui.
+    // El firmware/manager USB ya lo maneja, y rearmarlo dos veces puede causar microcortes.
 }
 
 void GamepadUSBHostListener::process_ctrlr_report(uint8_t dev_addr, uint8_t const* report, uint16_t len) {
     (void)dev_addr;
 
+    if (report == nullptr || len < 1) return;
+
+    // Base antes de meter DualShock:
+    // DualSense y default van por process_ds().
+    // No forzamos DS4 a process_ds4().
     switch(controller_pid) {
-        // DualShock 4 original 0x05C4
-        case DS4_ORG_PRODUCT_ID:
-
-        // DualShock 4 v2 / Sony 0x09CC
-        // DS4_PRODUCT_ID representa 0x09CC.
-        case DS4_PRODUCT_ID:
-
-        // Compatibles PS4 / Wheels
-        case PS4_WHEEL_PRODUCT_ID:
-        case 0xB67B:
-        case 0x00EE:
-            // FIX:
-            // No bloquear por isDS4Identified.
-            // Si el feature report falla, igual procesamos el input.
-            process_ds4(report, len);
-            break;
-
-        // DualSense 0x0CE6
         case 0x0CE6:
             process_ds(report, len);
             break;
@@ -365,6 +364,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
     PS4Report controller_report;
     static PS4Report prev_report = { 0 };
 
+    memset(&controller_report, 0, sizeof(controller_report));
     memcpy(&controller_report, report, sizeof(controller_report));
 
     if (diff_report(&prev_report, &controller_report) || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
@@ -566,6 +566,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
     DSReport controller_report;
     static DSReport prev_ds_report = { 0 };
 
+    memset(&controller_report, 0, sizeof(controller_report));
     memcpy(&controller_report, report, sizeof(controller_report));
 
     if (prev_ds_report.reportCounter != controller_report.reportCounter || macro_mute_active || turbo_state || controller_report.buttonWest || sq_mode_active) {
@@ -758,16 +759,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 }
 
 void GamepadUSBHostListener::update_ctrlr() {
-    if (controller_pid == DS4_ORG_PRODUCT_ID ||
-        controller_pid == DS4_PRODUCT_ID ||
-        controller_pid == PS4_WHEEL_PRODUCT_ID ||
-        controller_pid == 0xB67B ||
-        controller_pid == 0x00EE) {
-
-        // FIX:
-        // No depender de isDS4Identified.
-        update_ds4();
-    }
+    // Base DualSense-only: no update especial DS4.
 }
 
 void GamepadUSBHostListener::update_ds4() {
@@ -800,7 +792,7 @@ uint32_t GamepadUSBHostListener::map(uint32_t x, uint32_t in_min, uint32_t in_ma
 }
 
 bool GamepadUSBHostListener::diff_than_2(uint8_t x, uint8_t y) {
-    return (x - y > 2) || (y - x > 2);
+    return (x > y) ? ((x - y) > 2) : ((y - x) > 2);
 }
 
 bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const* rpt2) {
@@ -817,47 +809,16 @@ bool GamepadUSBHostListener::diff_report(PS4Report const* rpt1, PS4Report const*
 }
 
 void GamepadUSBHostListener::setup_ds4() {
-    if (hasDS4DefReport) {
-        memcpy(&ds4Config, report_buffer + 1, sizeof(PS4ControllerConfig));
-
-        if ((ds4Config.hidUsage == 0x2721) || (ds4Config.hidUsage == 0x2127)) {
-            isDS4Identified = true;
-            return;
-        }
-    }
-
-    // FIX:
-    // Aunque no llegue el definition report, no bloquear el DualShock.
-    isDS4Identified = true;
+    // Base DualSense-only: DS4 no se inicializa aqui.
+    isDS4Identified = false;
+    hasDS4DefReport = false;
 }
 
 void GamepadUSBHostListener::init_ds4(const uint8_t* descReport, uint16_t descLen) {
-    // FIX:
-    // Antes esto quedaba en false y podia dejar el DS4 sin input.
-    isDS4Identified = true;
+    (void)descReport;
+    (void)descLen;
+
+    // Base DualSense-only: no pedir reportes DS4.
+    isDS4Identified = false;
     hasDS4DefReport = false;
-
-    if (descReport == nullptr || descLen == 0) {
-        return;
-    }
-
-    tuh_hid_report_info_t report_info[4];
-    uint8_t report_count = tuh_hid_parse_report_descriptor(report_info, 4, descReport, descLen);
-
-    for(uint8_t i = 0; i < report_count; i++) {
-        if (report_info[i].report_id == PS4AuthReport::PS4_DEFINITION) {
-            memset(report_buffer, 0, PS4_ENDPOINT_SIZE);
-
-            report_buffer[0] = PS4AuthReport::PS4_DEFINITION;
-
-            host_get_report(PS4AuthReport::PS4_DEFINITION, report_buffer, 48);
-
-            hasDS4DefReport = true;
-            break;
-        }
-    }
-
-    // FIX:
-    // Si el get_report no responde o no coincide, igual dejamos DS4 habilitado.
-    isDS4Identified = true;
 }
