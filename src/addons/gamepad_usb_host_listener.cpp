@@ -32,9 +32,6 @@ static uint32_t macro_mute_start_time = 0;
 static uint32_t turbo_timer = 0;
 static bool turbo_state = false;
 
-static bool square_hold_active = false;
-static bool square_locked = false;
-static uint32_t square_hold_start = 0;
 
 #define DEADZONE_RAW 6
 
@@ -222,9 +219,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     turbo_timer = 0;
     turbo_state = false;
 
-    square_hold_active = false;
-    square_locked = false;
-    square_hold_start = 0;
 
     sq_mode_active = false;
     sq_was_pressed = false;
@@ -283,9 +277,6 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     turbo_timer = 0;
     turbo_state = false;
 
-    square_hold_active = false;
-    square_locked = false;
-    square_hold_start = 0;
 
     sq_mode_active = false;
     sq_was_pressed = false;
@@ -459,22 +450,7 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
             }
 
             if (controller_report.buttonWest) {
-                if (!square_locked && !square_hold_active) {
-                    square_hold_active = true;
-                    square_hold_start = getMillis();
-                }
-
-                if (square_hold_active) {
-                    if (getMillis() - square_hold_start < 4700) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-                    } else {
-                        square_hold_active = false;
-                        square_locked = true;
-                    }
-                }
-            } else {
-                square_hold_active = false;
-                square_locked = false;
+                _controller_host_state.buttons |= GAMEPAD_MASK_B3;
             }
 
             if (controller_report.buttonR1) {
@@ -689,22 +665,7 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
             }
 
             if (buttonWest) {
-                if (!square_locked && !square_hold_active) {
-                    square_hold_active = true;
-                    square_hold_start = getMillis();
-                }
-
-                if (square_hold_active) {
-                    if (getMillis() - square_hold_start < 248) {
-                        _controller_host_state.buttons |= GAMEPAD_MASK_B3;
-                    } else {
-                        square_hold_active = false;
-                        square_locked = true;
-                    }
-                }
-            } else {
-                square_hold_active = false;
-                square_locked = false;
+                _controller_host_state.buttons |= GAMEPAD_MASK_B3;
             }
 
             if (buttonR1) {
