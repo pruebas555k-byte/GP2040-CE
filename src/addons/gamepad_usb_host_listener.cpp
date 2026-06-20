@@ -35,20 +35,6 @@ static bool turbo_state = false;
 
 #define DEADZONE_RAW 6
 
-// [SQUARE MODE] - activo mientras cuadrado apretado + 300ms despues de soltar
-static bool sq_mode_active = false;
-static bool sq_was_pressed = false;
-static uint32_t sq_release_time = 0;
-
-#define SQ_MODE_TAIL_MS 300
-
-// [SQUARE MODE] - Remeson al presionar cuadrado
-static bool sq_bump_active = false;
-static uint32_t sq_bump_start = 0;
-
-#define SQ_BUMP_MS 50
-#define SQ_BUMP_OFFSET 1800
-
 // Curva izquierdo EAFC sin cuadrado
 static uint16_t applyCurve(uint8_t raw) {
     int offset = (int)raw - 128;
@@ -86,49 +72,6 @@ static uint16_t applyCurve(uint8_t raw) {
 // Mapeo lineal puro 1:1
 static uint16_t applyLinear(uint8_t raw) {
     return (uint16_t)((uint32_t)raw * (GAMEPAD_JOYSTICK_MAX - GAMEPAD_JOYSTICK_MIN) / 255 + GAMEPAD_JOYSTICK_MIN);
-}
-
-// [SQUARE MODE] - Remeson solo en eje X al presionar cuadrado
-static void applySquareBump(uint16_t &lx, uint16_t &ly) {
-    if (!sq_bump_active) return;
-
-    (void)ly;
-
-    int32_t x = (int32_t)lx - SQ_BUMP_OFFSET;
-
-    if (x < (int32_t)GAMEPAD_JOYSTICK_MIN) x = GAMEPAD_JOYSTICK_MIN;
-    if (x > (int32_t)GAMEPAD_JOYSTICK_MAX) x = GAMEPAD_JOYSTICK_MAX;
-
-    lx = (uint16_t)x;
-}
-
-// [SQUARE MODE] - Actualizar estado segun si cuadrado esta apretado
-static void updateSquareMode(bool buttonWest) {
-    if (buttonWest) {
-        if (!sq_was_pressed) {
-            sq_bump_active = true;
-            sq_bump_start = getMillis();
-        }
-
-        sq_mode_active = true;
-        sq_was_pressed = true;
-        sq_release_time = 0;
-    } else {
-        if (sq_was_pressed) {
-            sq_was_pressed = false;
-            sq_release_time = getMillis();
-        }
-
-        if (sq_mode_active && sq_release_time != 0) {
-            if (getMillis() - sq_release_time >= SQ_MODE_TAIL_MS) {
-                sq_mode_active = false;
-            }
-        }
-    }
-
-    if (sq_bump_active && getMillis() - sq_bump_start >= SQ_BUMP_MS) {
-        sq_bump_active = false;
-    }
 }
 
 void GamepadUSBHostListener::setup() {
@@ -220,12 +163,6 @@ void GamepadUSBHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t c
     turbo_state = false;
 
 
-    sq_mode_active = false;
-    sq_was_pressed = false;
-    sq_release_time = 0;
-    sq_bump_active = false;
-    sq_bump_start = 0;
-
     last_hid_report_time = getMillis();
 
     // DualSense necesita init/output report para empezar bien.
@@ -277,12 +214,6 @@ void GamepadUSBHostListener::unmount(uint8_t dev_addr) {
     turbo_timer = 0;
     turbo_state = false;
 
-
-    sq_mode_active = false;
-    sq_was_pressed = false;
-    sq_release_time = 0;
-    sq_bump_active = false;
-    sq_bump_start = 0;
 
     last_hid_report_time = 0;
 }
@@ -397,17 +328,9 @@ void GamepadUSBHostListener::process_ds4(uint8_t const* report, uint16_t len) {
 
     {
         if (current_profile == PROFILE_EAFC) {
-            updateSquareMode(controller_report.buttonWest);
-
-            // Izquierdo: curva normal, lineal al apretar cuadrado
-            if (sq_mode_active) {
-                _controller_host_state.lx = applyLinear(controller_report.leftStickX);
-                _controller_host_state.ly = applyLinear(controller_report.leftStickY);
-                applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
-            } else {
-                _controller_host_state.lx = applyCurve(controller_report.leftStickX);
-                _controller_host_state.ly = applyCurve(controller_report.leftStickY);
-            }
+            // Cuadrado no modifica ningun stick.
+            _controller_host_state.lx = applyCurve(controller_report.leftStickX);
+            _controller_host_state.ly = applyCurve(controller_report.leftStickY);
 
             // Derecho: siempre lineal
             _controller_host_state.rx = applyLinear(controller_report.rightStickX);
@@ -614,16 +537,9 @@ void GamepadUSBHostListener::process_ds(uint8_t const* report, uint16_t len) {
 
     {
         if (current_profile == PROFILE_EAFC) {
-            updateSquareMode(buttonWest);
-
-            if (sq_mode_active) {
-                _controller_host_state.lx = applyLinear(leftStickX);
-                _controller_host_state.ly = applyLinear(leftStickY);
-                applySquareBump(_controller_host_state.lx, _controller_host_state.ly);
-            } else {
-                _controller_host_state.lx = applyCurve(leftStickX);
-                _controller_host_state.ly = applyCurve(leftStickY);
-            }
+            // Cuadrado no modifica ningun stick.
+            _controller_host_state.lx = applyCurve(leftStickX);
+            _controller_host_state.ly = applyCurve(leftStickY);
 
             _controller_host_state.rx = applyLinear(rightStickX);
             _controller_host_state.ry = applyLinear(rightStickY);
